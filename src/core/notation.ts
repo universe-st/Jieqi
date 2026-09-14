@@ -53,7 +53,7 @@ function namesDestinationFile(kind: Kind): boolean {
  * Two brothers on one file are told apart by 前/后 instead of by a file number — where 前 is the one
  * nearer the opponent. Returns `null` when the plain file number is unambiguous.
  */
-function prefixFor(board: Board, square: number, name: string): '前' | '后' | null {
+function prefixFor(board: Board, square: number, name: string): '前' | '後' | null {
   const piece = board.at(square);
   if (!piece) return null;
   const color = readingColor(board, square) ?? piece.color;
@@ -69,7 +69,7 @@ function prefixFor(board: Board, square: number, name: string): '前' | '后' | 
   if (brothers.length < 2) return null;
   // Red moves up the board, so for red the *smallest* rank is the leading piece; for black the largest.
   const sorted = brothers.sort((a, b) => (color === 'red' ? rankOf(a) - rankOf(b) : rankOf(b) - rankOf(a)));
-  return sorted[0] === square ? '前' : '后';
+  return sorted[0] === square ? '前' : '後';
 }
 
 /** Renders `move` (played in the position `board` currently holds) in Chinese notation. */
@@ -89,7 +89,7 @@ export function toChineseNotation(board: Board, move: Move): string {
   }
 
   const forward = color === 'red' ? dy < 0 : dy > 0;
-  const verb = forward ? '进' : '退';
+  const verb = forward ? '進' : '退';
   if (namesDestinationFile(kind)) {
     return `${head}${verb}${fileNumber(color, fileOf(move.to))}`;
   }

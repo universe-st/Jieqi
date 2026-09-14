@@ -930,7 +930,26 @@ JIEQI_VERSION_CODE=15 ./build-android-release.sh
 
 下一版 versionCode 从 **16** 起（本次用了 15；上一节写的"基线 14"是笔误——基线应当是"已用过的最大值 + 1"）。
 
-### 13.6 未验证 / 边界
+### 13.6 签名 release 包（1.4.3）— 棋子繁体化
+
+```
+JIEQI_VERSION_CODE=16 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.4.3-release.apk`，**17,875,959 B** |
+| badging | `com.jieqi.game`、versionName **1.4.3**、versionCode **16**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（与 1.2.1–1.4.2 同一把密钥） |
+| 改动 | `KIND_NAME` 棋子字 帅/将/马/车 → 帥/將/馬/車（炮兵卒仕士相象繁简同形不变）；抽子判词 红 帥 / 黑 將（`spin.ts` 硬编码处）；notation 进→進、后→後，棋谱全繁体（車九進五 / 暗兵五進一）；`backdoor.ts` 后门版本号 1.4.1→1.4.3（上两版漏改，已修正） |
+| 字体 | 霞鹜文楷 WOFF2 cmap 已核：帥將馬車全在，无缺字 |
+| 门禁 | typecheck 0 错；`pnpm test` 97/97（5 处繁体断言更新：车九进五/马八进七/吃马/暗兵五进一×2） |
+| 包内核对 | `assets/www/assets/index-BgHkWSTE.js`：帥×2、將×2、馬×1、車×1；仅剩 2 处简体为界面文案（送将提示、抽子说明），非棋子字 |
+| 坚果云 | 已上传 `揭棋_20260915_v2.apk`（同日 v1 为 1.4.2） |
+
+下一版 versionCode 从 **17** 起。
+
+### 13.7 未验证 / 边界
 
 - **焦点环的像素没有本仓库的门禁**：本项目的验收是"人看截图 + 读数"，像素级 A/B（真鼠标点击后
   按钮顶边必须与没被碰过的邻居同色、真 `Tab` 后必须读到环色）在**框架仓库**里常驻

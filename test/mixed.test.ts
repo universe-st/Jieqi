@@ -343,7 +343,7 @@ describe('M4 · turning a 暗子 over may hand it to the opponent', () => {
 
     const move = { from: squareOf(4, 6), to: squareOf(4, 5) };
     // The notation is the mover's: red played a 暗兵 forward one — not a 暗卒.
-    expect(toChineseNotation(board, move)).toBe('暗兵五进一');
+    expect(toChineseNotation(board, move)).toBe('暗兵五進一');
     const event = game.apply(move);
     // …while the face that came up is the black 卒 it really was.
     expect(event.revealedColor).toBe('black');
@@ -631,7 +631,7 @@ describe('混斗 trays', () => {
     // 混斗's twist: red may take a red piece, and red — the capturer — turned it over.
     const ownColour = captureEvent('red', hiddenRedHorse).captured;
     if (!ownColour) throw new Error('missing capture');
-    expect(captureLabel(ownColour, 'red', 'red')).toBe('吃马');
+    expect(captureLabel(ownColour, 'red', 'red')).toBe('吃馬');
     expect(captureLabel(ownColour, 'black', 'red')).toBe('吃暗子');
   });
 });

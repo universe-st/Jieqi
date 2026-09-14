@@ -575,7 +575,7 @@ describe('notation', () => {
     // first move the QQ strategy page recommends.
     const hidden = putHidden(board, 'red', 'R', 'P', 4, 6);
     finalize(board);
-    expect(toChineseNotation(board, { from: hidden, to: squareOf(4, 5) })).toBe('暗兵五进一');
+    expect(toChineseNotation(board, { from: hidden, to: squareOf(4, 5) })).toBe('暗兵五進一');
   });
 
   it('uses 前/后 when two same-named pieces share a file', () => {
@@ -597,8 +597,8 @@ describe('notation', () => {
     const rook = put(board, 'red', 'R', 0, 9);
     const horse = put(board, 'red', 'H', 1, 9);
     finalize(board);
-    expect(toChineseNotation(board, { from: rook, to: squareOf(0, 4) })).toBe('车九进五');
-    expect(toChineseNotation(board, { from: horse, to: squareOf(2, 7) })).toBe('马八进七');
+    expect(toChineseNotation(board, { from: rook, to: squareOf(0, 4) })).toBe('車九進五');
+    expect(toChineseNotation(board, { from: horse, to: squareOf(2, 7) })).toBe('馬八進七');
   });
 });
 

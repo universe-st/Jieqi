@@ -116,7 +116,7 @@ export function planSpin(random: () => number = Math.random): SpinPlan {
 export function drawVerdict(face: Color): { title: string; detail: string } {
   const red = face === FRONT_FACE;
   return {
-    title: red ? '红 帅' : '黑 将',
+    title: red ? '红 帥' : '黑 將',
     detail: red ? '你执红方 · 先行' : '你执黑方 · 电脑先行',
   };
 }

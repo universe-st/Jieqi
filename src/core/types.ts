@@ -196,8 +196,8 @@ export const forwardStep = (color: Color): number => (color === 'red' ? -1 : 1);
 
 /** Chinese names, indexed by colour because 帅/将 and friends differ. */
 export const KIND_NAME: Readonly<Record<Color, Record<Kind, string>>> = {
-  red: { K: '帅', A: '仕', E: '相', H: '马', R: '车', C: '炮', P: '兵' },
-  black: { K: '将', A: '士', E: '象', H: '马', R: '车', C: '炮', P: '卒' },
+  red: { K: '帥', A: '仕', E: '相', H: '馬', R: '車', C: '炮', P: '兵' },
+  black: { K: '將', A: '士', E: '象', H: '馬', R: '車', C: '炮', P: '卒' },
 };
 
 export const COLOR_NAME: Readonly<Record<Color, string>> = { red: '红方', black: '黑方' };
