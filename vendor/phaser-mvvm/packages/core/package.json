@@ -1,0 +1,19 @@
+{
+  "name": "@phaser-mvvm/core",
+  "version": "1.0.0",
+  "description": "Reactive core of phaser-mvvm: reactivity, collections, binding contexts, expression compilation, scheduler",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "private": true
+}

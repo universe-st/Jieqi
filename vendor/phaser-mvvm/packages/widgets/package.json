@@ -1,0 +1,32 @@
+{
+  "name": "@phaser-mvvm/widgets",
+  "version": "1.0.0",
+  "description": "Widget library of phaser-mvvm: Panel, Label, TextField, TextArea, Button, ScrollView, Repeat, Modal",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "require": "./dist/index.cjs"
+    },
+    "./compose": {
+      "types": "./src/compose.ts",
+      "import": "./src/compose.ts",
+      "require": "./dist/compose.cjs"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@phaser-mvvm/core": "workspace:*",
+    "@phaser-mvvm/layout": "workspace:*",
+    "@phaser-mvvm/phaser": "workspace:*"
+  },
+  "peerDependencies": {
+    "phaser": "^4.2.0"
+  },
+  "private": true
+}

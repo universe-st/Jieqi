@@ -1,0 +1,39 @@
+{
+  "name": "jieqi",
+  "version": "1.2.2",
+  "private": true,
+  "type": "module",
+  "description": "揭棋 (Jieqi) — a Chinese-chess variant with hidden pieces, played against an AI. Phaser 4 + phaser-mvvm, shipped to Android through Cordova.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4174 --strictPort",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "selfplay": "node --experimental-strip-types scripts/selfplay.ts",
+    "android:release": "./build-android-release.sh",
+    "android:keystore": "./scripts/gen-keystore.sh",
+    "vendor:mvvm": "./scripts/vendor-phaser-mvvm.sh"
+  },
+  "dependencies": {
+    "@phaser-mvvm/core": "workspace:*",
+    "@phaser-mvvm/layout": "workspace:*",
+    "@phaser-mvvm/phaser": "workspace:*",
+    "@phaser-mvvm/widgets": "workspace:*",
+    "phaser": "4.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "cordova": "^13.0.0",
+    "cordova-android": "^14.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
+  }
+}

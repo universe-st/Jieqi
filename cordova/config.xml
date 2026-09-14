@@ -1,0 +1,43 @@
+<?xml version='1.0' encoding='utf-8'?>
+<widget id="com.jieqi.game" version="1.2.2" android-versionCode="7"
+        xmlns="http://www.w3.org/ns/widgets"
+        xmlns:cdv="http://cordova.apache.org/ns/1.0">
+    <name>揭棋</name>
+    <description>揭棋 — 与 AI 对战的中国象棋变种，暗子随机、翻开方见真章。</description>
+    <author email="dev@example.com" href="https://example.com">JieQi</author>
+    <content src="index.html" />
+    <access origin="*" />
+    <allow-intent href="http://*/*" />
+    <allow-intent href="https://*/*" />
+    <preference name="Orientation" value="portrait" />
+    <preference name="Fullscreen" value="true" />
+    <preference name="AndroidLaunchMode" value="singleTop" />
+    <preference name="SplashMaintainAspectRatio" value="true" />
+    <!--
+      Android's own colour literal (#AARRGGBB), NOT the 0xAARRGGBB spelling the Cordova docs use:
+      cordova-android copies this preference straight into `res/values/colors.xml`, and AAPT2 rejects
+      the Java-style form with "Invalid <color> for given resource value".
+    -->
+    <preference name="BackgroundColor" value="#ff1b1210" />
+    <preference name="android-minSdkVersion" value="24" />
+    <preference name="android-targetSdkVersion" value="35" />
+    <preference name="AndroidInsecureFileModeEnabled" value="false" />
+    <platform name="android">
+        <preference name="android-minSdkVersion" value="24" />
+        <preference name="android-targetSdkVersion" value="35" />
+        <!--
+          Two icons per density. `src` is the composed tile used by Android 7 and older; the
+          `background`/`foreground` pair feeds the adaptive icon Android 8+ masks into whatever shape
+          the launcher uses. Both are drawn by scripts/build-icons.py — the app ships no art files.
+
+          The outer 108dp canvas is not all visible: Android only guarantees the inner 72dp, which is
+          why the foreground keeps the bead at 55% of the canvas.
+        -->
+        <icon density="ldpi" src="res/icon/android/legacy-ldpi.png" />
+        <icon density="mdpi" src="res/icon/android/legacy-mdpi.png" background="res/icon/android/background-mdpi.png" foreground="res/icon/android/foreground-mdpi.png" />
+        <icon density="hdpi" src="res/icon/android/legacy-hdpi.png" background="res/icon/android/background-hdpi.png" foreground="res/icon/android/foreground-hdpi.png" />
+        <icon density="xhdpi" src="res/icon/android/legacy-xhdpi.png" background="res/icon/android/background-xhdpi.png" foreground="res/icon/android/foreground-xhdpi.png" />
+        <icon density="xxhdpi" src="res/icon/android/legacy-xxhdpi.png" background="res/icon/android/background-xxhdpi.png" foreground="res/icon/android/foreground-xxhdpi.png" />
+        <icon density="xxxhdpi" src="res/icon/android/legacy-xxxhdpi.png" background="res/icon/android/background-xxxhdpi.png" foreground="res/icon/android/foreground-xxxhdpi.png" />
+    </platform>
+</widget>
