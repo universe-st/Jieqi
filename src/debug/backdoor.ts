@@ -363,7 +363,7 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
   };
 
   const api: Backdoor = {
-    version: '1.4.0',
+    version: '1.4.1',
 
     screen,
 

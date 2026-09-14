@@ -757,3 +757,53 @@ pnpm run build
 > `0e65c46`（1.2.3 还原）、`e950d46`（1.2.4 恢复锐利+柔和翻面光）、`61ec2d6`（1.3.0 BGM+提示增强）、
 > `638f159`（1.3.1 定先后切对局曲）、`8e7bb3c`（1.3.2 重复困毙判负）。下一版 versionCode 基线从这里读：**12**。
 
+---
+
+## 12. 禁止循环追棋 + 混斗禁止立即吃将（2026-09-14，1.4.1）
+
+### 12.0 签名 release 包
+
+```
+JIEQI_VERSION_CODE=14 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.4.1-release.apk`，**17,875,627 B** |
+| badging | `com.jieqi.game`、versionName **1.4.1**、versionCode **14**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（与 1.2.1–1.4.0 同一把密钥） |
+| 包内核对 | 串 `禁止循环追棋` / `禁止立即吃将` / `翻出敌方` 均在 bundle 中，旧串 `禁止全局同形` 已清除 |
+| 坚果云 | `揭棋/揭棋_20260914_v7.apk`，PROPFIND 远端 `getcontentlength` 17875627 == 本地字节数（HTTP 201） |
+
+下一版 versionCode 基线：**14**。
+
+### 12.1 规则改动（用户拍板）
+
+1. **禁止循环追棋**（取代禁止全局同形）：同一局面**最多出现两次**，第三次重现的着法才禁止
+   （`wouldRepeat` 判 `repetitionCount(key) >= 2`）；**走子方正被将军时完全豁免**
+   （`wouldRepeat` 对 `inCheck()` 直接放行）。全部提示文案改为「禁止循环追棋」。
+2. **混斗禁止立即吃将**：新增 `wouldEatGeneral()` —— 上一手是 `selfCheck`（翻出的敌方子照着自己将帅）时，
+   对方**下一手不能用这枚翻出的子直接吃将**；被将军一方得一回合解将，走完那一手规则即失效。
+   AI 根着法表（`selectableMoves`）过滤、`apply()` 兜底抛错、UI 横幅「禁止立即吃将」+ 状态栏
+   `N 处禁止立即吃将` 计数。
+
+### 12.2 单测（97/97 全绿）
+
+```
+pnpm test          # 6 个文件、97 条，全绿
+pnpm run typecheck
+```
+
+- `test/rules.test.ts` 重构为**第三次重现判禁**（两圈循环局，`ply=7` 时 `wouldRepeat(收尾)=true`、
+  `isSelectable=false`、`apply` 抛 `禁止循环追棋`）；**被将军豁免**用例（同一局面，`inCheck` 时放行 /
+  不将军时禁）；悔棋重开；AI 不选禁着。
+- `test/mixed.test.ts`：M5 用例改为**禁吃将**（`wouldEatGeneral(吃将)=true`、`isSelectable=false`、
+  `apply` 抛 `禁止立即吃将`、黑方仍有其他着法）+ 新增"规则在一手后失效"用例（黑走一步将位移后
+  `wouldEatGeneral` 恒 false）。
+
+### 12.3 未重跑项（如实说明）
+
+- §9 的 Playwright 实跑记录里出现过的旧文案（`禁止全局同形`、`其中 1 处禁止循环追棋` 的旧版本、
+  M5 直接吃将判将死那条路）随规则改动已失效；本轮**未**跑浏览器端接受测试，新横幅/状态栏文案
+  只经单测与包内串核对验证。上一版基线：`1fd2e03`（1.4.1 规则改动提交）。
+
