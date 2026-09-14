@@ -26,6 +26,7 @@ import { StartScene } from './scenes/StartScene';
 import { loadGameFont } from './ui/font';
 import { loadingPage } from './ui/loading';
 import { C, DESIGN_HEIGHT, DESIGN_WIDTH } from './ui/palette';
+import { RENDER_SCALE } from './ui/render-scale';
 import { JIEQI_THEME } from './ui/theme';
 
 const page = loadingPage();
@@ -40,9 +41,12 @@ async function boot(): Promise<void> {
   // Set before the first widget exists, so nothing is ever painted in the framework's default palette.
   setTheme(JIEQI_THEME);
 
-  // The UI layer lays out in the same design units as the drawing buffer: no `designResolution` split,
-  // so pages, snap grid and glyph density all live at one buffer pixel per design pixel. See
-  // `ui/render-scale`.
+  // Tell the UI layer that the game is a magnified *design*, not a reflowing space: the pages keep laying
+  // out 450×900 (and keep their safe-area insets, snapping grid and glyph density in those units) while
+  // the game below is `RENDER_SCALE` times bigger with the camera zoomed to match. See `ui/render-scale`.
+  MVVMPlugin.configure({
+    designResolution: { width: DESIGN_WIDTH, height: DESIGN_HEIGHT },
+  });
 
   const game = new Phaser.Game({
     type: Phaser.AUTO,
@@ -52,12 +56,15 @@ async function boot(): Promise<void> {
       // A fixed design resolution scaled to fit. The board and the HUD are then pixel-identical on every
       // phone, which is what a board game wants — a reflowing chessboard is a worse chessboard.
       //
-      // The buffer is exactly the 450×900 design and the browser upscales the canvas to fit the screen,
-      // which is what gives the board its slightly soft look. That is the intended look (see the 1.2.3
-      // revert); a device-resolution pass made it razor-sharp and was judged too harsh.
+      // The game size is the design **times the device pixel ratio**, and every scene zooms its camera by
+      // the same factor (`applyRenderScale`): that is what turns the drawing buffer into a device-pixel
+      // one, so the board's lines and the pieces are rasterised at the density of the screen instead of
+      // being upsampled by the browser. The CSS size of the canvas — what the player sees — is unchanged.
       mode: Phaser.Scale.FIT,
-      width: DESIGN_WIDTH,
-      height: DESIGN_HEIGHT,
+      // Rounded because a canvas backing store is whole pixels: a phone reporting `dpr = 2.625` would
+      // otherwise ask for 1181.25 and get a buffer the snap grid no longer matches.
+      width: Math.round(DESIGN_WIDTH * RENDER_SCALE),
+      height: Math.round(DESIGN_HEIGHT * RENDER_SCALE),
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
     render: {

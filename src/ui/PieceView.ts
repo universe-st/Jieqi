@@ -81,11 +81,12 @@ export class PieceView extends Phaser.GameObjects.Container {
       .setOrigin(0.5, 0.53);
 
     // The reveal flash. It lives inside the body so it collapses with the flip rather than hanging in
-    // mid-air at the widest point.
+    // mid-air at the widest point. Softened in 1.2.4: it used to bloom to PIECE_RADIUS×2.8 at alpha 0.9
+    // and read as a harsh flash on a crisp display — now it is a small glint that hugs the piece.
     this.sweep = scene.add
       .image(0, 0, TEX.glow)
       .setOrigin(0.5)
-      .setDisplaySize(PIECE_RADIUS * 2.8, PIECE_RADIUS * 2.8)
+      .setDisplaySize(PIECE_RADIUS * 2.0, PIECE_RADIUS * 2.0)
       .setAlpha(0);
 
     this.disc = scene.add.container(0, 0, [this.back, this.front, this.label, this.sweep]);
@@ -142,11 +143,11 @@ export class PieceView extends Phaser.GameObjects.Container {
         ease: 'Sine.easeIn',
         onComplete: () => {
           this.showFace(kind);
-          this.sweep.setAlpha(0.9).setScale(0.25);
+          this.sweep.setAlpha(0.5).setScale(0.3);
           this.scene.tweens.add({
             targets: this.sweep,
             alpha: 0,
-            scale: 1.6,
+            scale: 1.3,
             duration: FLIP_HALF_MS + 110,
             ease: 'Cubic.easeOut',
           });
