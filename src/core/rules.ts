@@ -355,11 +355,15 @@ export class JieqiGame {
     }
 
     // Every legal move would recreate an earlier position. Under 禁止全局同形 there is nothing left to
-    // play, and the position is dead rather than lost: neither side can make progress without
-    // repeating, so it is drawn. (A side with no *legal* move at all is a different story — 困毙 is a
-    // loss, and it was answered above.)
+    // play, and the side to move is dead the same way 困毙 kills one: no allowed move at all. Counted
+    // as a loss for the side to move (user's call, 2026-09-14 — it used to be 判和). A side with no
+    // *legal* move at all was already answered above as checkmate / 困毙.
     if (this.selectableMoves(side).length === 0) {
-      return { winner: null, kind: 'perpetual', text: '循环重复，判和' };
+      return {
+        winner: other(side),
+        kind: 'stalemate',
+        text: `${side === 'red' ? '红方' : '黑方'}困毙`,
+      };
     }
 
     if (this.halfMoveClock >= this.idlePlies) {
