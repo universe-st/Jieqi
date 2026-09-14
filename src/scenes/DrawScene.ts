@@ -57,6 +57,8 @@ export class DrawScene extends Phaser.Scene {
     announceScreen('draw');
     applyRenderScale(this);
     buildTextures(this);
+    // The draw is still pre-game: the menu track keeps playing through the spin and the verdict.
+    this.audio.setBgm('menu');
     this.audio.start(this);
     this.cameras.main.setBackgroundColor(C.backdrop);
     drawCurtain(this, { focusY: 0.46, focusRadius: DESIGN_WIDTH * 2.4 });

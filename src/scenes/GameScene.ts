@@ -31,8 +31,8 @@ import {
 
 import { DIFFICULTY, analyse, chooseMoveAsync, type Difficulty, type ScoredMove } from '../ai';
 import { audioDirector, type AudioDirector } from '../audio/AudioDirector';
-import { hangingSquares } from '../core/danger';
-import { isSquareAttacked } from '../core/moves';
+import { hangingSquares, isHanging } from '../core/danger';
+import { generateMoves, isKingSafe, isSquareAttacked } from '../core/moves';
 import { JieqiGame, type MoveEvent } from '../core/rules';
 import { randomSeed } from '../core/rng';
 import { FIRST_MOVER, type Color, type Move, KIND_NAME } from '../core/types';
@@ -65,9 +65,11 @@ export class GameScene extends Phaser.Scene {
   private boardSlot: Widget | null = null;
   private selected: number | null = null;
   private legalForSelected: Move[] = [];
+  /** Squares where the selected piece's move would expose its own general (送将) — shown as red X's. */
+  private sendsCheck: ReadonlySet<number> = new Set();
   private busyDepth = 0;
   private aiNonce = 0;
-  /** `this.time.now` of the last 禁止全局同形 banner, so a run of taps does not stack them. */
+  /** `this.time.now` of the last refusal banner (禁止全局同形 / 送将), so a run of taps does not stack them. */
   private lastRefusalAt = -Infinity;
 
   constructor() {
@@ -85,6 +87,7 @@ export class GameScene extends Phaser.Scene {
     this.busyDepth = 0;
     this.selected = null;
     this.legalForSelected = [];
+    this.sendsCheck = new Set();
     this.aiNonce = 0;
     this.lastRefusalAt = -Infinity;
   }
@@ -99,6 +102,8 @@ export class GameScene extends Phaser.Scene {
     announceScreen('game');
     applyRenderScale(this);
     buildTextures(this);
+    // The board runs the original game track; the menu track was playing up to here.
+    this.audio.setBgm('game');
     this.audio.start(this);
     this.cameras.main.setBackgroundColor(C.backdrop);
 
@@ -404,6 +409,7 @@ export class GameScene extends Phaser.Scene {
       this.jieqi = JieqiGame.create({ seed });
       this.selected = null;
       this.legalForSelected = [];
+      this.sendsCheck = new Set();
       this.board.clearHighlights();
       this.vm.reset();
       this.syncVm();
@@ -503,13 +509,24 @@ export class GameScene extends Phaser.Scene {
       void this.play(target, true);
       return;
     }
+    // 送将提示: the square is on the piece's movement pattern but the move would expose the general.
+    // Refuse by name, exactly like 禁止全局同形, and leave the selection standing so another square is
+    // one tap away.
+    if (this.selected !== null && this.sendsCheck.has(square)) {
+      this.refuseCheckGiveaway();
+      return;
+    }
     if (piece && piece.color === this.player) {
       this.selected = square;
       this.legalForSelected = this.jieqi
         .legalMoves(this.player)
         .filter((move) => move.from === square);
+      this.sendsCheck = this.sendsCheckOf(square);
       this.board.setSelection(square);
-      this.board.setLegalTargets(this.legalForSelected.map((move) => move.to));
+      this.board.setLegalTargets(
+        this.legalForSelected.map((move) => ({ square: move.to, danger: this.landsHanging(move) })),
+      );
+      this.board.setSendsCheck(this.sendsCheck);
       const label = KIND_NAME[this.player][piece.hidden ? piece.homeKind : piece.kind];
       // Targets that 禁止全局同形 forbids are offered like any other — tapping one is how the player
       // finds out, and refusing by name beats hiding a square and leaving them to wonder why it is not
@@ -537,8 +554,10 @@ export class GameScene extends Phaser.Scene {
   private clearSelection(): void {
     this.selected = null;
     this.legalForSelected = [];
+    this.sendsCheck = new Set();
     this.board.setSelection(null);
     this.board.setLegalTargets([]);
+    this.board.setSendsCheck(this.sendsCheck);
     if (this.jieqi.result) return;
     if (this.jieqi.inCheck(this.jieqi.sideToMove)) {
       this.vm.status.value = '被将军！';
@@ -548,6 +567,29 @@ export class GameScene extends Phaser.Scene {
       this.jieqi.sideToMove === this.player
         ? `${this.jieqi.sideToMove === 'red' ? '红方' : '黑方'}先行，请落子`
         : `电脑执${this.jieqi.sideToMove === 'red' ? '红' : '黑'}行棋…`;
+  }
+
+  /** The squares a move of the piece on `square` could reach but must not: it would expose the general. */
+  private sendsCheckOf(square: number): ReadonlySet<number> {
+    const board = this.jieqi.board;
+    const out = new Set<number>();
+    for (const move of generateMoves(board, this.player, [])) {
+      if (move.from !== square) continue;
+      const undo = board.makeMove(move.from, move.to);
+      const safe = isKingSafe(board, this.player);
+      board.unmakeMove(undo);
+      if (!safe) out.add(move.to);
+    }
+    return out;
+  }
+
+  /** Would the piece stand hanging — capturable for free, with no friendly protection — after this move? */
+  private landsHanging(move: Move): boolean {
+    const board = this.jieqi.board;
+    const undo = board.makeMove(move.from, move.to);
+    const hanging = isHanging(board, move.to);
+    board.unmakeMove(undo);
+    return hanging;
   }
 
   /** Plays a move and then, if the game has not ended, lets the AI answer. */
@@ -578,6 +620,22 @@ export class GameScene extends Phaser.Scene {
       this.refreshDanger();
       this.leave();
     }
+  }
+
+  /**
+   * Tells the player that moving to the tapped square would 送将 — expose their own general.
+   *
+   * The move is *not* in the legal list the board offered (a legal move never leaves the general
+   * attacked), so it is refused here by name, the way 禁止全局同形 is — a player who taps and gets
+   * nothing back has no way to tell a rule from a bug. The selection is left standing.
+   */
+  private refuseCheckGiveaway(): void {
+    this.vm.status.value = '移动会送将：这一步会让己方将帅暴露在攻击之下，不能走';
+    const now = this.time.now;
+    if (now - this.lastRefusalAt < 900) return;
+    this.lastRefusalAt = now;
+    this.audio.play('omen');
+    void banner(this, '移动会送将', '请另选一步', C.check, { holdMs: 760 });
   }
 
   /**
@@ -652,7 +710,14 @@ export class GameScene extends Phaser.Scene {
 
     const playerWon = result.winner === this.player;
     const colour = result.winner === null ? C.gold : playerWon ? C.jade : C.check;
-    this.audio.play(result.winner === null ? 'draw' : playerWon ? 'win' : 'lose');
+    // A drawn game has no dedicated track — the game music keeps playing and only the draw sting
+    // announces it. A win or a loss switches the whole loop to the state's own track, which is the
+    // ending's music, so the one-shot victory sting is skipped rather than played over it.
+    if (result.winner === null) {
+      this.audio.play('draw');
+    } else {
+      this.audio.setBgm(playerWon ? 'win' : 'lose');
+    }
     petalFall(this, playerWon ? 54 : 26);
     await banner(
       this,
@@ -815,7 +880,7 @@ export class GameScene extends Phaser.Scene {
       const best = candidates[0];
       if (!best) return [];
       this.board.setSelection(best.move.from);
-      this.board.setLegalTargets([best.move.to]);
+      this.board.setLegalTargets([{ square: best.move.to }]);
       this.selected = best.move.from;
       this.legalForSelected = this.jieqi
         .legalMoves(this.player)

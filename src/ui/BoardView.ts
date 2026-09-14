@@ -98,6 +98,10 @@ export class BoardView {
 
   private selection: number | null = null;
   private legalTargets: number[] = [];
+  /** The subset of `legalTargets` where the piece would land hanging — drawn red instead of green. */
+  private dangerTargets: ReadonlySet<number> = new Set();
+  /** Squares where the selected piece's move would expose its own general — drawn as red X's. */
+  private sendsCheck: ReadonlySet<number> = new Set();
   private lastMove: Move | null = null;
   private checkSquare: number | null = null;
   private locked = false;
@@ -458,21 +462,32 @@ export class BoardView {
     this.redrawMarks();
   }
 
-  setLegalTargets(squares: number[]): void {
-    this.legalTargets = squares;
+  /**
+   * The squares the selected piece can move to, each drawn as a breathing ring — green for a safe
+   * landing, red for one where the piece would stand hanging (capturable for free, no friendly
+   * protection). The danger split is computed by the scene from the same `isHanging` rule the 吃子提示
+   * overlay draws from; here it is only a tint.
+   */
+  setLegalTargets(targets: readonly { square: number; danger?: boolean }[]): void {
+    this.legalTargets = targets.map((target) => target.square);
+    this.dangerTargets = new Set(
+      targets.filter((target) => target.danger === true).map((target) => target.square),
+    );
     for (const image of this.targets) {
       this.scene.tweens.killTweensOf(image);
       image.destroy();
     }
     this.targets.length = 0;
-    for (const square of squares) {
+    for (const target of targets) {
+      const square = target.square;
       const local = this.local(square);
       const occupied = this.viewOfSquare(square) !== undefined;
+      const danger = target.danger === true;
       const dot = this.scene.add
         .image(local.x, local.y, TEX.ring)
         .setOrigin(0.5)
         .setDisplaySize(PIECE_RADIUS * 1.2, PIECE_RADIUS * 1.2)
-        .setTint(C.legal)
+        .setTint(danger ? C.hintOwn : C.legal)
         .setAlpha(0.85);
       this.targetLayer.add(dot);
       this.targets.push(dot);
@@ -489,6 +504,18 @@ export class BoardView {
         ease: 'Sine.easeInOut',
       });
     }
+    this.redrawMarks();
+  }
+
+  /**
+   * 送将提示: squares where the selected piece's move would leave its own general attacked, drawn as
+   * red X's.
+   *
+   * Deliberately independent of the 吃子提示 checkbox: this is a legality warning — "this square is a
+   * trap" — not a capture hint, so it shows on selection whether or not the hint is on.
+   */
+  setSendsCheck(squares: ReadonlySet<number>): void {
+    this.sendsCheck = new Set(squares);
     this.redrawMarks();
   }
 
@@ -586,6 +613,7 @@ export class BoardView {
   clearHighlights(): void {
     this.setSelection(null);
     this.setLegalTargets([]);
+    this.setSendsCheck(new Set());
     this.setLastMove(null);
     this.setCheckSquare(null);
     this.setDangerMarks([]);
@@ -622,8 +650,23 @@ export class BoardView {
     for (const square of this.legalTargets) {
       if (!this.viewOfSquare(square)) continue;
       const local = this.local(square);
-      g.lineStyle(2, C.legal, 0.9);
+      g.lineStyle(2, this.dangerTargets.has(square) ? C.hintOwn : C.legal, 0.9);
       g.strokeCircle(local.x, local.y, PIECE_RADIUS + 2.5);
+    }
+
+    // 送将提示: a red X on every square where the selected piece would expose its own general. Drawn
+    // on the marks layer so it sits under the piece layer — a square holding an enemy piece still shows
+    // the X around it, and an empty one shows it across the square.
+    for (const square of this.sendsCheck) {
+      const local = this.local(square);
+      const arm = PIECE_RADIUS * 0.8;
+      g.lineStyle(2.5, C.check, 0.95);
+      g.beginPath();
+      g.moveTo(local.x - arm, local.y - arm);
+      g.lineTo(local.x + arm, local.y + arm);
+      g.moveTo(local.x + arm, local.y - arm);
+      g.lineTo(local.x - arm, local.y + arm);
+      g.strokePath();
     }
 
     if (this.checkSquare !== null) {

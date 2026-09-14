@@ -25,8 +25,28 @@
 
 import Phaser from 'phaser';
 
-/** The looping background track. */
-export const MUSIC_KEY = 'bgm';
+/**
+ * The looping background tracks, one per game state.
+ *
+ * The music follows the state: the title screen and the 定先后 draw share the menu track, the board
+ * runs the original game track, and an ending plays a dedicated victory / defeat track. Files ship as
+ * `bgm-menu.mp3` / `bgm.mp3` / `bgm-win.mp3` / `bgm-lose.mp3` (see `scripts/build-audio.sh`).
+ */
+export const BGM = {
+  /** 开始菜单 + 定先后. */
+  menu: 'bgm-menu',
+  /** 对局中 — the original track, unchanged. */
+  game: 'bgm',
+  /** 胜利. */
+  win: 'bgm-win',
+  /** 失败. */
+  lose: 'bgm-lose',
+} as const;
+
+export type BgmState = keyof typeof BGM;
+
+/** The original looping game track. */
+export const MUSIC_KEY = BGM.game;
 
 /**
  * Every one-shot cue, mapped to the texture key it was loaded under.
@@ -132,6 +152,8 @@ export class AudioDirector {
   private readonly cache: Phaser.Cache.CacheManager;
   private settings: AudioSettings = load();
   private music: VolumedSound | null = null;
+  /** The state the current (or next) track answers to. `null` until `start()` has run. */
+  private bgmState: BgmState | null = null;
   /** Set once the loader has finished, so a cue asked for during load is dropped rather than thrown. */
   private ready = false;
 
@@ -151,7 +173,10 @@ export class AudioDirector {
     const queue = (key: string, url: string): void => {
       if (!this.cache.audio.has(key)) scene.load.audio(key, url);
     };
-    queue(MUSIC_KEY, `${AUDIO_BASE}/bgm.mp3`);
+    queue(BGM.menu, `${AUDIO_BASE}/bgm-menu.mp3`);
+    queue(BGM.game, `${AUDIO_BASE}/bgm.mp3`);
+    queue(BGM.win, `${AUDIO_BASE}/bgm-win.mp3`);
+    queue(BGM.lose, `${AUDIO_BASE}/bgm-lose.mp3`);
     for (const name of Object.keys(SFX_FILES) as SfxName[]) {
       queue(SFX[name], `${AUDIO_BASE}/sfx/${SFX_FILES[name]}.mp3`);
     }
@@ -175,10 +200,27 @@ export class AudioDirector {
     }
   }
 
+  /**
+   * Switches the looping track to the one for `state`.
+   *
+   * Same-state calls are no-ops, so every scene can announce its state in `create()` and only real
+   * transitions change anything. Call **before** `start()`: the state then decides which track the
+   * first unlock begins, so a scene never plays a frame of the wrong music.
+   */
+  setBgm(state: BgmState): void {
+    if (this.bgmState === state) return;
+    this.bgmState = state;
+    if (!this.ready || !this.music) return;
+    this.music.stop();
+    this.music = null;
+    this.ensureMusic();
+  }
+
   private ensureMusic(): void {
     if (!this.ready || this.music) return;
-    if (!this.cache.audio.has(MUSIC_KEY)) return;
-    this.music = this.sound.add(MUSIC_KEY, {
+    const key = BGM[this.bgmState ?? 'menu'];
+    if (!this.cache.audio.has(key)) return;
+    this.music = this.sound.add(key, {
       loop: true,
       volume: this.effectiveMusic,
     }) as VolumedSound;
@@ -254,10 +296,14 @@ export class AudioDirector {
     });
   }
 
-  /** Stops the music outright. Nothing calls this in normal play — the track spans every scene. */
+  /**
+   * Stops the music outright. Nothing calls this in normal play — the track spans every scene — and a
+   * later `start()`/`setBgm` restarts from the state that was current.
+   */
   stop(): void {
     this.music?.stop();
     this.music = null;
+    this.bgmState = null;
   }
 
   /** True once a track exists and is actually playing — what an acceptance run asserts on. */

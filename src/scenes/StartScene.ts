@@ -67,6 +67,7 @@ export class StartScene extends Phaser.Scene {
     announceScreen('start');
     applyRenderScale(this);
     buildTextures(this);
+    this.audio.setBgm('menu');
     this.audio.start(this);
     this.cameras.main.setBackgroundColor(C.backdrop);
     drawCurtain(this, { focusY: 0.3 });

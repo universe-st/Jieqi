@@ -70,6 +70,31 @@ echo "==> encoding bgm.mp3"
 ffmpeg -y -v error -i "$CACHE/bgm.m4a" -acodec libmp3lame -b:a 128k -ar 44100 -ac 2 "$OUT/bgm.mp3"
 
 # ---------------------------------------------------------------------------------------------
+# State music (menu / win / lose)
+# ---------------------------------------------------------------------------------------------
+# The game switches its looping track by state (see `src/audio/AudioDirector.ts`). Same provenance
+# pattern as the game track: download once into the cache, re-encode to MP3. These are compressed
+# harder — mono ~48-64 kbps — so each lands around 1 MB; they ship inside the APK and are background
+# beds, not something the player leans in to hear.
+#
+# Format: file|label|cache-key|URL|bitrate
+STATE_MUSIC=(
+  "bgm-menu|menu|0f340bac68ff4e3b8e8498fae60b7288.m4a|https://cdn-work.muse.top/work/audio/0f340bac68ff4e3b8e8498fae60b7288.m4a|48k"
+  "bgm-win|win|1b16a625cdc04691bd8e11c815fe5ea9.mp3|https://cdn-work.muse.top/work/audio/1b16a625cdc04691bd8e11c815fe5ea9.mp3|64k"
+  "bgm-lose|lose|242ce2ca9ecc420d8655b3e7e2e6cfaa.mp3|https://cdn-work.muse.top/work/audio/242ce2ca9ecc420d8655b3e7e2e6cfaa.mp3|48k"
+)
+
+for entry in "${STATE_MUSIC[@]}"; do
+  IFS='|' read -r file label cache_key url bitrate <<< "$entry"
+  if [[ ! -f "$CACHE/$cache_key" ]]; then
+    echo "==> downloading the $label music"
+    curl -fsSL -o "$CACHE/$cache_key" "$url"
+  fi
+  echo "==> encoding $file.mp3"
+  ffmpeg -y -v error -i "$CACHE/$cache_key" -acodec libmp3lame -b:a "$bitrate" -ar 44100 -ac 1 "$OUT/$file.mp3"
+done
+
+# ---------------------------------------------------------------------------------------------
 # Sound effects
 # ---------------------------------------------------------------------------------------------
 echo "==> encoding sound effects"
