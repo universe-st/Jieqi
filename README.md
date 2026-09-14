@@ -443,6 +443,8 @@ src/
 
 ```
 build-android-release.sh     根目录的签名 release 打包脚本
+LICENSE                      MIT 协议
+CHANGELOG.md                 版本历史（1.0.0 起）
 PLAN.md                      动手前写的实施计划（规则基线、架构、AI 方案、里程碑、风险）
 docs/ACCEPTANCE.md           验收记录：命令、读数、本轮修掉的缺陷
 scripts/build-audio.sh       下载背景音乐并挑选音效，全部转成 mp3 落到 public/audio/
@@ -467,5 +469,6 @@ phaser-mvvm 1.0.0 **尚未发布到 npm**，而本仓库必须能独立构建（
 
 ## 10. 许可
 
-游戏代码 MIT。`vendor/phaser-mvvm/` 是 [phaser-mvvm](https://github.com/universe-st/phaser-mvvm)
-（MIT, © universe-st）的源码副本，许可证一并带上。`phaser` 作为 peer dependency 从 npm 引入（MIT）。
+游戏代码 MIT（见 [LICENSE](LICENSE)）。`vendor/phaser-mvvm/` 是
+[phaser-mvvm](https://github.com/universe-st/phaser-mvvm)（MIT, © universe-st）的源码副本，
+许可证一并带上。`phaser` 作为 peer dependency 从 npm 引入（MIT）。
