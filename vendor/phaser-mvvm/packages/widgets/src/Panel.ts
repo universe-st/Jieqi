@@ -204,7 +204,7 @@ export class Panel extends Widget {
     if (this.variant !== 'plain') {
       this.skinFor(theme).paint(this.bodyGraphics, width, height, this.visualState);
     }
-    if (this.focused) {
+    if (this.focusVisible) {
       paintFocusRing(this.bodyGraphics, theme, width, height, radius);
     }
   }

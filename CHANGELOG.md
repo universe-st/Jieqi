@@ -3,6 +3,18 @@
 本项目所有版本均出自同一份签名密钥（证书 SHA-256 `b0ec2bcd…89c9`）。
 详细验收读数见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
 
+## [1.4.2] — 2026-09-15
+
+- **全游戏不再有焦点框**：`MVVMPlugin.configure({ focus: { ring: false } })`。揭棋是手指玩的游戏，框架的焦点环
+  （"键盘在这儿"的提示）在本作里没有受众——它过去会在对话框自动聚焦第一个控件时套在滑杆上。关掉的只是
+  "画不画"：`Tab`/方向键照旧移动焦点、`Enter` 照旧激活、无障碍镜像照旧报告聚焦的控件，删掉这一行即可恢复
+  （见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) §13.4）。
+- **同步 phaser-mvvm 基线**（`pnpm vendor:mvvm`，上游 `ef2b43d`）：这次集成顺带在框架侧修掉三条缺陷——点过/
+  被聚焦过的控件不再留框（`:focus-visible` 语义）、`focus.ring` 从只写不读的死选项变成真开关、滑杆的重绘缓存键
+  补上可见性。本地 Slider 补丁仍在。完整来龙去脉见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) §13。
+- 测试与构建：`97/97` 全绿、typecheck 0 错、`vite build` 通过；框架侧的三次改动一条都没碰到规则引擎与 AI。
+- 签名 release 包：`jieqi-1.4.2-release.apk`（versionCode **15**，**17,875,959 B**，V2 签名同密钥 `b0ec2bcd…89c9`）。
+
 ## [1.4.1] — 2026-09-14
 
 - **禁止循环追棋**（取代禁止全局同形）：同一局面**最多出现两次**，第三次重现的着法才禁止

@@ -46,6 +46,13 @@ async function boot(): Promise<void> {
   // the game below is `RENDER_SCALE` times bigger with the camera zoomed to match. See `ui/render-scale`.
   MVVMPlugin.configure({
     designResolution: { width: DESIGN_WIDTH, height: DESIGN_HEIGHT },
+    // No focus frames anywhere in this game. 揭棋 is played with a finger (and the HUD is the only mvvm
+    // surface), so the ring — the framework's "the keyboard is here" cue — is a box nobody asked for:
+    // it appeared around a slider whenever a dialog focused one, and the user asked for it twice.
+    // Focus itself is untouched: `Tab`/D-Pad still move, `Enter` still activates, the accessibility
+    // mirror still reports the focused control. Delete this line (or set `true`) to bring the ring back
+    // for a keyboard/gamepad build — it is the only switch, see phaser-mvvm ADR-0012.
+    focus: { ring: false },
   });
 
   const game = new Phaser.Game({

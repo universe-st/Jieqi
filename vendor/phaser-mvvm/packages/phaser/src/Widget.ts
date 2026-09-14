@@ -163,6 +163,21 @@ export class Widget extends Phaser.GameObjects.Container implements LayoutNode {
   focusable = false;
 
   /**
+   * Whether a **pointer press** may paint this widget's focus ring.
+   *
+   * The framework follows CSS `:focus-visible`: clicking a control focuses it (so the next `Tab`
+   * continues from where the user clicked) but does **not** light it up — the click already showed
+   * what happened, and a frame that stays around afterwards reads as "the app is still waiting for
+   * something". A keyboard/gamepad walk still draws the ring, which is the only clue the user has
+   * about where `Enter` will land, so nothing is lost where the ring is load-bearing.
+   *
+   * Text fields opt in (see `TextInputBase`), exactly as browsers keep `:focus-visible` on a clicked
+   * `<input>`: there the focus ring is *where the typing goes*, and a click is one of the two normal
+   * ways to get there.
+   */
+  focusRingOnPointer = false;
+
+  /**
    * Whether this widget (and its whole subtree) can be hit by the pointer. `false` means **painted and
    * laid out, but not a pointer target**.
    *
@@ -290,6 +305,7 @@ export class Widget extends Phaser.GameObjects.Container implements LayoutNode {
   private _hovered = false;
   private _pressed = false;
   private _focused = false;
+  private _focusVisible = false;
   private _error = false;
   private pointerReady = false;
   private unsubscribeTheme: (() => void) | null = null;
@@ -324,6 +340,23 @@ export class Widget extends Phaser.GameObjects.Container implements LayoutNode {
 
   get focused(): boolean {
     return this._focused;
+  }
+
+  /**
+   * Whether the focus ring should be painted **right now**.
+   *
+   * This is the flag controls paint behind, not {@link Widget.focused}: focus can arrive without the
+   * right to show itself (a pointer press on a control that has not opted in — see
+   * {@link Widget.focusRingOnPointer} — or a host that turned the ring off with
+   * `mvvm.configure({ focus: { ring: false } })`).
+   *
+   * `focused` keeps its own meaning and is *not* weakened by this: a widget the user clicked is
+   * focused, `visualState` says `focused`, and the next `Tab` continues from it. Only the drawing
+   * differs. Read `focused` for behaviour (the caret, the soft keyboard, `Enter` activation) and this
+   * one for pixels.
+   */
+  get focusVisible(): boolean {
+    return this._focused && this._focusVisible;
   }
 
   get error(): boolean {
@@ -510,14 +543,25 @@ export class Widget extends Phaser.GameObjects.Container implements LayoutNode {
    * A widget being destroyed does **not** emit `widget:blur`: `destroy()` clears the flag directly
    * (there is nobody left to hear it, and a listener that ran during teardown would be handed a
    * half-dismantled object).
+   *
+   * `focusVisible` is the *request* for this focus change (`false` for a pointer press on a control
+   * that does not opt in, see {@link Widget.focusRingOnPointer}); the focus manager has already
+   * applied the host's global `focus.ring` gate to it. A change of that request without a change of
+   * `focused` repaints but emits nothing — the events promise *changes of focus*, and the round-110
+   * lesson (`widget:state` used to fire twice per click) applies here too.
    */
-  setFocusedInternal(value: boolean): void {
-    if (this._focused === value) {
+  setFocusedInternal(value: boolean, focusVisible = true): void {
+    const visible = value && focusVisible;
+    if (this._focused === value && this._focusVisible === visible) {
       return;
     }
+    const changed = this._focused !== value;
     this._focused = value;
+    this._focusVisible = visible;
     this.appearanceChanged();
-    this.emit(value ? WIDGET_EVENTS.FOCUS : WIDGET_EVENTS.BLUR);
+    if (changed) {
+      this.emit(value ? WIDGET_EVENTS.FOCUS : WIDGET_EVENTS.BLUR);
+    }
   }
 
   /** Fires the activation callback (pointer click, Enter/Space, gamepad south button). */
@@ -882,6 +926,7 @@ export class Widget extends Phaser.GameObjects.Container implements LayoutNode {
     this._hovered = false;
     this._pressed = false;
     this._focused = false;
+    this._focusVisible = false;
     this.pointerReady = false;
 
     const engine = this.engine;

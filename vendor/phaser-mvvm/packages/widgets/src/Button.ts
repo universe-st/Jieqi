@@ -395,7 +395,9 @@ export class Button extends Widget {
     this.skinFor(theme).paint(this.bodyGraphics, width, height, state);
 
     const radius = Math.max(0, Math.min(theme.radius.md, Math.min(width, height) / 2));
-    if (this.focused) {
+    // `focusVisible`, not `focused`: a button the user clicked with the mouse is focused (so `Tab`
+    // continues from it) but is not left with a frame around it (`Widget#focusRingOnPointer`).
+    if (this.focusVisible) {
       paintFocusRing(this.bodyGraphics, theme, width, height, radius);
     }
 

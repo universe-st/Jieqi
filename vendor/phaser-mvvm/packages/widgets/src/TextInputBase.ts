@@ -31,7 +31,7 @@ import {
   stageRectOf,
   Widget,
 } from '@phaser-mvvm/phaser';
-import type { A11yDescriptor, PointerChainOptionHooks } from '@phaser-mvvm/phaser';
+import type { A11yDescriptor, PointerChainOptionHooks, WidgetState } from '@phaser-mvvm/phaser';
 import { paintFocusRing, textInputSkinStyles } from './appearance';
 import { toCssColor } from './color';
 import { contentBox } from './geometry';
@@ -618,6 +618,10 @@ export abstract class TextInputBase extends Widget {
     this.anchor = this.value.length;
 
     this.focusable = true;
+    // …and the one control family that keeps its ring when the *mouse* focuses it, exactly as browsers
+    // keep `:focus-visible` on a clicked `<input>`: the ring is where the typing goes, and clicking the
+    // box is one of the two normal ways to get there (the other is `Tab`). A button has no such excuse.
+    this.focusRingOnPointer = true;
     // A text box to a screen reader; the text, the placeholder-as-label and the validation state are
     // read live through `describeA11y()`.
     this.a11y = { role: 'textbox' };
@@ -1043,8 +1047,11 @@ export abstract class TextInputBase extends Widget {
     if (width <= 0 || height <= 0) {
       return;
     }
-    this.skinFor(theme).paint(this.backgroundGraphics, width, height, this.visualState);
-    if (this.focused && !this.error) {
+    this.skinFor(theme).paint(this.backgroundGraphics, width, height, this.skinState());
+    // `focusVisible` (not `focused`): the ring follows the host's `focus.ring` gate. For a field it is
+    // still on after a mouse click — `focusRingOnPointer` is set in the constructor — and still off
+    // while the field is in `error`, which the skin paints instead.
+    if (this.focusVisible && !this.error) {
       paintFocusRing(this.backgroundGraphics, theme, width, height, radius);
     }
   }
@@ -1205,6 +1212,20 @@ export abstract class TextInputBase extends Widget {
       return theme.colors.textMuted;
     }
     return theme.colors.text;
+  }
+
+  /**
+   * The state the background skin is painted in.
+   *
+   * A focused field is normally painted by the skin itself (`textInputSkinStyles.focused` uses the
+   * `focusRing` colour as its border) with the explicit ring drawn on top of it. That is why the host's
+   * global gate has to be folded in **here** as well: with `mvvm.configure({ focus: { ring: false } })`
+   * suppressing only the `Graphics` ring would still leave a focus-coloured border behind, which is the
+   * same information painted twice. Hover/pressed are unaffected — `WidgetState` ranks them above
+   * `focused`, so those states never reach this branch while the pointer is on the field.
+   */
+  private skinState(): WidgetState {
+    return this.visualState === 'focused' && !this.focusVisible ? 'normal' : this.visualState;
   }
 
   /**

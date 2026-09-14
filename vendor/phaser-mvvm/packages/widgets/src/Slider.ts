@@ -418,9 +418,12 @@ export class Slider extends Widget {
     // Every input the paint below reads belongs in this key. `min`/`max` are the ones that are easy to
     // forget — the knob sits at `(value - min) / (max - min)`, so a range change moves the whole drawing
     // while `current` stays put (V67), and `knobRadius`/`trackThickness` resize it.
-    // Every input the paint below reads belongs in this key. `min`/`max` are the ones that are easy to
-    // forget — the knob sits at `(value - min) / (max - min)`, so a range change moves the whole drawing
-    // while `current` stays put (V67), and `knobRadius`/`trackThickness` resize it.
+    //
+    // `focusVisible` is in here for the same reason and was the one that got away (round 113): the ring
+    // is drawn from `focusVisible`, not from `visualState`, so a pointer press on an already-focused
+    // slider (state stays `focused`, visibility goes true → false) produced the same key and the paint
+    // was skipped — the ring stayed on screen until something *else* forced a repaint. A cache key has to
+    // cover everything the paint reads, including the inputs it reads for a *second* drawing decision.
     const key = [
       width,
       height,
@@ -430,6 +433,7 @@ export class Slider extends Widget {
       this.knobRadius,
       this.trackThickness,
       this.visualState,
+      this.focusVisible,
       disabled,
       theme.name,
     ].join('|');
@@ -488,7 +492,7 @@ export class Slider extends Widget {
     graphics.lineStyle(theme.borderWidth * 2, disabled ? theme.colors.textDisabled : fillColor, 1);
     graphics.strokeCircle(knobX, centerY, knobRadius);
 
-    if (this.focused) {
+    if (this.focusVisible) {
       paintFocusRing(graphics, theme, width, height, Math.min(theme.radius.md, height / 2));
     }
   }
