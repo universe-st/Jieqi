@@ -125,11 +125,13 @@ export interface GameOptions {
  * A full game of jieqi, with undo history.
  *
  * `legalMoves()` is the honest move set (every move that does not leave your own king attacked);
- * `selectableMoves()` additionally applies **禁止全局同形**, which forbids any move that would bring
- * back a position this game has already seen — not merely the third occurrence of one. Keeping the two
- * apart is what lets a dead position be *drawn* rather than misreported as stalemate, and it is what
- * lets the UI explain the prohibition (legal but forbidden) instead of pretending the move does not
- * exist.
+ * `selectableMoves()` additionally applies **禁止循环追棋**, which forbids any move that would bring
+ * back a position this game has already seen **twice** — the third occurrence of one. A position may
+ * appear twice; only the third time it comes back is refused, and the side that is **in check** is
+ * exempt from the rule entirely (it may play any legal escape, even one that re-treads an earlier
+ * position). Keeping the two lists apart is what lets a dead position be *drawn* rather than
+ * misreported as stalemate, and it is what lets the UI explain the prohibition (legal but forbidden)
+ * instead of pretending the move does not exist.
  *
  * The prohibition is a property of the *position*, not of a side: `repetitions` is keyed by the exact
  * Zobrist key, which includes the side to move, so a move can only ever be forbidden for the player who
@@ -259,38 +261,75 @@ export class JieqiGame {
   }
 
   /**
-   * Would playing `move` bring the board back to a position that has already occurred in this game?
+   * Would playing `move` bring the board back to a position that has already occurred **twice** in this
+   * game — the third occurrence of it?
    *
-   * 禁止全局同形, the rule the UI calls out by name when it blocks a tap. The check is on the Zobrist
+   * 禁止循环追棋, the rule the UI calls out by name when it blocks a tap. The check is on the Zobrist
    * key, which folds in the side to move, so this asks the only question that matters: does the
    * *position* come back, not merely the arrangement of the pieces with the other side to move.
+   *
+   * A position may appear twice; only the third time it comes back is forbidden. And the side that is
+   * currently **in check** is exempt entirely — 循环追棋 is what the checker would do to keep a chase
+   * going, so the rule must not also trap the chased king in the very squares that are its only way out.
    */
   wouldRepeat(move: Move): boolean {
+    if (this.inCheck()) return false;
     const undo = this.board.makeMove(move.from, move.to);
     const key = this.board.key;
     this.board.unmakeMove(undo);
-    return this.repetitionCount(key) > 0;
+    return this.repetitionCount(key) >= 2;
   }
 
   /**
-   * Legal moves a player is actually allowed to choose: the 禁止全局同形 guard forbids every move that
-   * would recreate an earlier position of this game.
+   * Would playing `move` immediately take a general that a **handed-over** piece is checking?
    *
-   * Undo deliberately does *not* answer to this rule — taking a move back is not a move, and the
+   * 混斗's sting (rule M5): the piece a move just flipped may turn out to be the opponent's, and it may
+   * be checking the side that moved it. Left alone, that general is simply taken on the reply — the
+   * flipping side never gets a turn. **禁止立即吃将** gives it one: on the immediate reply, the handed-over
+   * piece may not take the general outright; the flipped side gets to move the general away, block, or
+   * capture the checker. Once the reply has been played the rule is spent — this method is false for
+   * every later move.
+   *
+   * Only the handed-over piece can be the culprit (nothing else attacks the general in a selfCheck —
+   * the position was safe a ply ago, so the flip is the only change), which is why the test is "is this
+   * the piece that was just handed over, and is it taking the mover's general?".
+   */
+  wouldEatGeneral(move: Move): boolean {
+    if (this.mode !== 'mixed') return false;
+    const last = this.history[this.history.length - 1];
+    if (!last) return false;
+    const e = last.event;
+    if (!e.selfCheck) return false;
+    // The handed-over piece stands on the square the flip moved to; only that piece, only the general
+    // of the side that moved it, only on this immediate reply.
+    if (move.from !== e.move.to) return false;
+    const target = this.board.at(move.to);
+    if (!target || target.kind !== 'K') return false;
+    return target.color === e.color;
+  }
+
+  /**
+   * Legal moves a player is actually allowed to choose: the 禁止循环追棋 and 禁止立即吃将 guards forbid
+   * every move that would recreate an earlier position of this game, or take the general with a
+   * just-handed-over piece.
+   *
+   * Undo deliberately does *not* answer to these rules — taking a move back is not a move, and the
    * positions it walks through are exactly the ones the game already recorded.
    */
   selectableMoves(color: Color = this.board.side): Move[] {
-    return this.legalMoves(color).filter((move) => !this.wouldRepeat(move));
+    return this.legalMoves(color).filter(
+      (move) => !this.wouldRepeat(move) && !this.wouldEatGeneral(move),
+    );
   }
 
-  /** Is `move` legal *and* allowed under 禁止全局同形? What a tap on the board asks. */
+  /** Is `move` legal *and* allowed under the two guards above? What a tap on the board asks. */
   isSelectable(move: Move, color: Color = this.board.side): boolean {
-    return this.isLegal(move, color) && !this.wouldRepeat(move);
+    return this.isLegal(move, color) && !this.wouldRepeat(move) && !this.wouldEatGeneral(move);
   }
 
   /**
    * Plays `move`. Throws rather than silently corrupting the position — on a move that is not legal,
-   * and on one that 禁止全局同形 forbids.
+   * and on one that 禁止循环追棋 or 禁止立即吃将 forbids.
    */
   apply(move: Move): MoveEvent {
     if (this.result) throw new Error('apply: the game is already over');
@@ -302,12 +341,15 @@ export class JieqiGame {
     // be (rule M2).
     if (board.ownerAt(move.from) !== color) throw new Error('apply: not your piece');
     if (!this.isLegal(move, color)) throw new Error('apply: illegal move');
-    // 禁止全局同形 is a rule of the game, so it is enforced where the game is, not only where the taps
-    // are read: the UI refuses such a move *by name* before it gets here (and the AI never picks one,
-    // because its root list is `selectableMoves`), but a repetition must not be able to enter the
-    // history even if some future caller forgets to ask.
+    // 禁止循环追棋 and 禁止立即吃将 are rules of the game, so they are enforced where the game is, not
+    // only where the taps are read: the UI refuses such a move *by name* before it gets here (and the
+    // AI never picks one, because its root list is `selectableMoves`), but a forbidden move must not be
+    // able to enter the history even if some future caller forgets to ask.
     if (this.wouldRepeat(move)) {
-      throw new Error('apply: 禁止全局同形 — this move would recreate an earlier position');
+      throw new Error('apply: 禁止循环追棋 — this move would recreate an earlier position for the third time');
+    }
+    if (this.wouldEatGeneral(move)) {
+      throw new Error('apply: 禁止立即吃将 — a handed-over piece may not take the general on the immediate reply');
     }
 
     const capturedPiece = board.at(move.to) ?? null;
@@ -425,10 +467,11 @@ export class JieqiGame {
       };
     }
 
-    // Every legal move would recreate an earlier position. Under 禁止全局同形 there is nothing left to
-    // play, and the side to move is dead the same way 困毙 kills one: no allowed move at all. Counted
-    // as a loss for the side to move (user's call, 2026-09-14 — it used to be 判和). A side with no
-    // *legal* move at all was already answered above as checkmate / 困毙.
+    // Every legal move would recreate a position this game has already seen twice, or is a 禁止立即吃将
+    // capture. Under 禁止循环追棋 there is nothing left to play, and the side to move is dead the same
+    // way 困毙 kills one: no allowed move at all. Counted as a loss for the side to move (user's call,
+    // 2026-09-14 — it used to be 判和). A side with no *legal* move at all was already answered above as
+    // checkmate / 困毙.
     if (this.selectableMoves(side).length === 0) {
       return {
         winner: other(side),

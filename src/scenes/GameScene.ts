@@ -78,7 +78,7 @@ export class GameScene extends Phaser.Scene {
   private sendsCheck: ReadonlySet<number> = new Set();
   private busyDepth = 0;
   private aiNonce = 0;
-  /** `this.time.now` of the last refusal banner (禁止全局同形 / 送将), so a run of taps does not stack them. */
+  /** `this.time.now` of the last refusal banner (禁止循环追棋 / 禁止立即吃将 / 送将), so a run of taps does not stack them. */
   private lastRefusalAt = -Infinity;
 
   constructor() {
@@ -540,7 +540,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     // 送将提示: the square is on the piece's movement pattern but the move would expose the general.
-    // Refuse by name, exactly like 禁止全局同形, and leave the selection standing so another square is
+    // Refuse by name, exactly like 禁止循环追棋, and leave the selection standing so another square is
     // one tap away.
     if (this.selected !== null && this.sendsCheck.has(square)) {
       this.refuseCheckGiveaway();
@@ -568,12 +568,14 @@ export class GameScene extends Phaser.Scene {
       const label = piece.hidden
         ? KIND_NAME[this.player][piece.homeKind]
         : KIND_NAME[piece.color][piece.kind];
-      // Targets that 禁止全局同形 forbids are offered like any other — tapping one is how the player
-      // finds out, and refusing by name beats hiding a square and leaving them to wonder why it is not
-      // there — but the count says up front that some of them are not available.
+      // Targets that 禁止循环追棋 or 禁止立即吃将 forbid are offered like any other — tapping one is how
+      // the player finds out, and refusing by name beats hiding a square and leaving them to wonder why
+      // it is not there — but the count says up front that some of them are not available.
       const forbidden = this.legalForSelected.filter((move) => this.jieqi.wouldRepeat(move)).length;
-      const repeatNote = forbidden > 0 ? `，其中 ${forbidden} 处禁止全局同形` : '';
-      this.vm.status.value = `${piece.hidden ? '暗' : ''}${label} · 可走 ${this.legalForSelected.length} 处${repeatNote}`;
+      const eatGen = this.legalForSelected.filter((move) => this.jieqi.wouldEatGeneral(move)).length;
+      const repeatNote = forbidden > 0 ? `，其中 ${forbidden} 处禁止循环追棋` : '';
+      const eatNote = eatGen > 0 ? `，其中 ${eatGen} 处禁止立即吃将` : '';
+      this.vm.status.value = `${piece.hidden ? '暗' : ''}${label} · 可走 ${this.legalForSelected.length} 处${repeatNote}${eatNote}`;
       this.audio.play('pick');
       return;
     }
@@ -626,7 +628,13 @@ export class GameScene extends Phaser.Scene {
   /** Plays a move and then, if the game has not ended, lets the AI answer. */
   async play(move: Move, byPlayer: boolean): Promise<void> {
     if (this.jieqi.result) return;
-    // 禁止全局同形. The move is legal in the ordinary sense — it is in the list the board just offered —
+    // 禁止立即吃将 (混斗). Refused here, by name, ahead of the repetition guard — a tap that would take
+    // the general with the piece the last move just handed over.
+    if (this.jieqi.wouldEatGeneral(move)) {
+      this.refuseEatGeneral(byPlayer);
+      return;
+    }
+    // 禁止循环追棋. The move is legal in the ordinary sense — it is in the list the board just offered —
     // so it is refused *here*, by name, rather than being quietly dropped out of the targets: a player
     // who taps and gets nothing back has no way to tell a rule from a bug.
     if (!this.jieqi.isSelectable(move)) {
@@ -657,7 +665,7 @@ export class GameScene extends Phaser.Scene {
    * Tells the player that moving to the tapped square would 送将 — expose their own general.
    *
    * The move is *not* in the legal list the board offered (a legal move never leaves the general
-   * attacked), so it is refused here by name, the way 禁止全局同形 is — a player who taps and gets
+   * attacked), so it is refused here by name, the way 禁止循环追棋 is — a player who taps and gets
    * nothing back has no way to tell a rule from a bug. The selection is left standing.
    */
   private refuseCheckGiveaway(): void {
@@ -670,28 +678,49 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Tells the player that 禁止全局同形 is what stopped their move.
+   * Tells the player that 禁止循环追棋 is what stopped their move.
    *
-   * Says *why* as well as *what*: "禁止全局同形" on its own is a rule name, and the thing the player
+   * Says *why* as well as *what*: "禁止循环追棋" on its own is a rule name, and the thing the player
    * needs to know is which mistake they are making — walking the position back to one it has already
-   * been in, which is exactly what a perpetual check would do. The selection is deliberately left
+   * been in twice, which is exactly what a perpetual chase would do. The selection is deliberately left
    * standing: the piece is still picked up, so the player can simply choose another square.
    */
   private refuseRepeat(byPlayer: boolean): void {
     if (!byPlayer) {
       // The engine's own moves are filtered before they are ever chosen, so reaching here means a bug —
       // say so instead of pretending the computer obeyed the rule.
-      this.vm.status.value = '对手的着法被禁止全局同形拦下（内部错误）';
+      this.vm.status.value = '对手的着法被禁止循环追棋拦下（内部错误）';
       return;
     }
-    this.vm.status.value = '禁止全局同形：这一步会让局面回到本局已经出现过的样子';
+    this.vm.status.value = '禁止循环追棋：这一步会让局面重复循环，请另选一步';
     // The selection stays up, so the same forbidden square is one tap away from being tried again. One
     // banner per refusal, not one per tap: the reason is already on screen.
     const now = this.time.now;
     if (now - this.lastRefusalAt < 900) return;
     this.lastRefusalAt = now;
     this.audio.play('omen');
-    void banner(this, '禁止全局同形', '局面重复 · 请另选一步', C.danger, { holdMs: 760 });
+    void banner(this, '禁止循环追棋', '局面重复 · 请另选一步', C.danger, { holdMs: 760 });
+  }
+
+  /**
+   * Tells the player that 禁止立即吃将 is what stopped their move.
+   *
+   * 混斗 only: the piece they just picked up was handed to them by the *opponent's* flip and is checking
+   * the opponent's general — taking that general on the spot would end the game before the flipped side
+   * got a single turn to answer. The rule gives them that turn, so this tap is refused by name. The
+   * selection stays up, like 禁止循环追棋.
+   */
+  private refuseEatGeneral(byPlayer: boolean): void {
+    if (!byPlayer) {
+      this.vm.status.value = '对手的着法被禁止立即吃将拦下（内部错误）';
+      return;
+    }
+    this.vm.status.value = '禁止立即吃将：翻出的敌方棋子这一手不能直接吃将，请先解将';
+    const now = this.time.now;
+    if (now - this.lastRefusalAt < 900) return;
+    this.lastRefusalAt = now;
+    this.audio.play('omen');
+    void banner(this, '禁止立即吃将', '请先解将 · 另选一步', C.check, { holdMs: 760 });
   }
 
   private afterMove(event: MoveEvent): void {
@@ -1097,7 +1126,7 @@ export class GameScene extends Phaser.Scene {
     this.refreshDanger();
   }
 
-  /** Every legal move of the side to move, split by whether 禁止全局同形 allows it. */
+  /** Every legal move of the side to move, split by whether 禁止循环追棋 allows it. */
   repetitionProbe(): { allowed: string[]; forbidden: string[] } {
     const label = (move: Move): string => `${move.from}-${move.to}`;
     const allowed: string[] = [];

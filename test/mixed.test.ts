@@ -412,15 +412,39 @@ describe('M5 · 反将自身: a reveal can check the side that moved it', () => 
     expect(game.inCheck('red')).toBe(true);
     expect(game.inCheck('black')).toBe(false);
 
-    // Black simply takes the 帅: it is black's turn, the rook is black's, and nothing else intervenes.
+    // 禁止立即吃将: the handed-over rook may not take the 帅 on the immediate reply — red gets a turn
+    // to answer (move the general away, block, or take the checker). The move exists (it is legal in
+    // the ordinary sense) but the rule names it, exactly like 禁止循环追棋.
     const captureKing = { from: to, to: squareOf(4, 9) };
     expect(game.legalMoves('black')).toContainEqual(captureKing);
-    game.apply(captureKing);
+    expect(game.wouldEatGeneral(captureKing)).toBe(true);
+    expect(game.isSelectable(captureKing)).toBe(false);
+    expect(game.selectableMoves('black')).not.toContainEqual(captureKing);
+    // The game's own door refuses it too, so it can never enter the history.
+    expect(() => game.apply(captureKing)).toThrow(/禁止立即吃将/);
+    expect(game.ply).toBe(1);
 
-    expect(game.board.at(squareOf(4, 9))?.kind).toBe('R');
-    expect(game.result).not.toBeNull();
-    expect(game.result?.winner).toBe('black');
-    expect(game.result?.kind).toBe('checkmate');
+    // The ban is on the general-capture, not on black's whole turn: black still has ordinary moves.
+    expect(game.selectableMoves('black').length).toBeGreaterThan(0);
+  });
+
+  it('spends the 禁止立即吃将 rule after the reply is played', () => {
+    const game = gameOn(selfCheckBoard());
+    game.apply({ from, to });
+
+    // Black answers with a quiet king move — not the flipped rook, which stays where it is checking.
+    const kingSq = game.board.kingSq.black;
+    const reply = game.selectableMoves('black').find(
+      (m) => m.from === kingSq && game.board.at(m.to) === null,
+    ) as Move;
+    game.apply(reply);
+
+    // The general was not taken on the reply, red still has to answer the check, and the rule — which
+    // guards only that immediate reply — is spent.
+    expect(game.board.at(squareOf(4, 9))?.kind).toBe('K');
+    expect(game.inCheck('red')).toBe(true);
+    expect(game.inCheck('black')).toBe(false);
+    expect(game.wouldEatGeneral({ from, to })).toBe(false);
   });
 
   it('counts a general that is no longer on the board as attacked', () => {

@@ -19,7 +19,7 @@ export type Color = 'red' | 'black';
  *   face down it counts as the property of the half it stands on (rule M2), which is what lets its
  *   owner-of-the-moment move it; turning it over hands it to whoever it really is (rule M4).
  *
- * Nothing else differs: the kings, the movement of a hidden piece, check, 困毙, 禁止全局同形 and the
+ * Nothing else differs: the kings, the movement of a hidden piece, check, 困毙, 禁止循环追棋 and the
  * draw are all the same in both modes.
  */
 export type GameMode = 'standard' | 'mixed';

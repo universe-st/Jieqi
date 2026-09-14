@@ -645,16 +645,21 @@ describe('undo', () => {
 });
 
 /**
- * 禁止全局同形 — a move that walks the position back to one this game has already been in is refused.
+ * 禁止循环追棋 — a move that walks the position back to one this game has already been in **twice** is
+ * refused (the third occurrence). The side that is in check is exempt.
  *
  * Two things are being pinned down here, and the difference between them is the whole rule:
  *
- *  - it is the **first** repetition that is forbidden, not the third (the old 长将/长捉 guard); and
- *  - the refusal happens at three levels, each of which has to hold on its own: `selectableMoves()`
- *    (what the AI is allowed to pick from), `apply()` (the game's own door), and — in the UI —
- *    the warning that names the rule instead of silently ignoring the tap.
+ *  - a position may occur **twice**; only the third time it comes back is refused (this replaced the
+ *    old "first repetition is forbidden" 禁止全局同形, which in turn had replaced 长将/长捉); and
+ *  - the side that is **in check** is exempt entirely — a chased king being forced to re-tread squares
+ *    is the escape, not the offence.
+ *
+ * The refusal happens at three levels, each of which has to hold on its own: `selectableMoves()`
+ * (what the AI is allowed to pick from), `apply()` (the game's own door), and — in the UI — the
+ * warning that names the rule instead of silently ignoring the tap.
  */
-describe('禁止全局同形', () => {
+describe('禁止循环追棋', () => {
   /**
    * A bare position with room for an honest cycle: both kings, and one rook each on a file of its own.
    * Red rook on the a-file, black rook on the i-file, so neither move in the cycle is a capture and
@@ -677,49 +682,98 @@ describe('禁止全局同形', () => {
     { from: squareOf(8, 4), to: squareOf(8, 5) },
   ];
 
-  it('refuses the second occurrence of a position, not the third', () => {
+  /** Records the position `move` would produce as having already occurred twice in this game. */
+  function repeatTwice(game: JieqiGame, move: Move): void {
+    const probe = game.board.clone();
+    probe.makeMove(move.from, move.to);
+    const key = probe.key;
+    (game as unknown as { bump(key: number): void }).bump(key);
+    (game as unknown as { bump(key: number): void }).bump(key);
+  }
+
+  it('allows a position to occur twice, refuses the third', () => {
     resetIds();
     const game = gameOn(cycleBoard());
     const opening = game.board.key;
 
+    // One full circuit of the cycle brings the opening position back — its second occurrence.
+    for (const move of CYCLE) game.apply(move);
+    expect(game.repetitionCount(opening)).toBe(2);
+
+    // A second circuit is fine until the closing move, which would be the opening's third occurrence.
     game.apply(CYCLE[0] as Move);
     game.apply(CYCLE[1] as Move);
     game.apply(CYCLE[2] as Move);
-    // Three plies in, the fourth brings back the opening position *exactly* — including the side to
-    // move, which is what makes it the same position rather than the same arrangement.
-    expect(game.repetitionCount(opening)).toBe(1);
     const closing = CYCLE[3] as Move;
     expect(game.legalMoves()).toContainEqual(closing);
     expect(game.wouldRepeat(closing)).toBe(true);
     expect(game.isSelectable(closing)).toBe(false);
     expect(game.selectableMoves()).not.toContainEqual(closing);
-    // ...and the game itself refuses it, so a repetition can never enter the history.
-    expect(() => game.apply(closing)).toThrow(/禁止全局同形/);
-    expect(game.ply).toBe(3);
+    // ...and the game itself refuses it, so a third occurrence can never enter the history.
+    expect(() => game.apply(closing)).toThrow(/禁止循环追棋/);
+    expect(game.ply).toBe(7);
   });
 
   it('leaves every other move of the same side alone, and re-opens what an undo takes back', () => {
     resetIds();
     const game = gameOn(cycleBoard());
-    for (const move of CYCLE.slice(0, 3)) game.apply(move);
+    for (const move of [...CYCLE, ...CYCLE.slice(0, 3)]) game.apply(move);
 
-    // Black has moves to choose from; only the one that recreates the opening position is forbidden.
+    // Black has moves to choose from; only the one that recreates the opening position a third time is
+    // forbidden.
     expect(game.selectableMoves().length).toBeGreaterThan(1);
     expect(game.selectableMoves()).not.toContainEqual(CYCLE[3]);
 
     // 悔棋 is not a move: it forgets the position it rewinds out of, so what was forbidden a moment ago
     // can be played again — the record is of the positions this game has *actually* been in.
-    game.undo(); // red's a5→a6, which had produced the position the cycle was about to close
+    game.undo(); // red's a5→a6, dropping the second occurrence of the position it produced
     expect(game.isSelectable(CYCLE[2] as Move)).toBe(true);
     game.apply(CYCLE[2] as Move);
-    // And with the cycle rebuilt, the closing move is refused again.
+    // And with that second occurrence restored, the closing move is refused again.
     expect(game.wouldRepeat(CYCLE[3] as Move)).toBe(true);
+  });
+
+  it('exempts the side that is in check from the whole rule', () => {
+    // The chase: black's rook keeps giving check, and the chased king's only replies walk it back
+    // through squares it has already stood on. That re-treading is the escape, not the offence, so the
+    // rule must not block it. Build the same position twice — once with red in check, once without —
+    // and bump the would-be-repeated position to "already seen twice" in both.
+    const move = { from: squareOf(0, 5), to: squareOf(4, 5) };
+
+    const build = (checked: boolean): JieqiGame => {
+      const board = emptyBoard('red');
+      put(board, 'red', 'K', 4, 9);
+      put(board, 'black', 'K', 3, 0);
+      put(board, 'red', 'R', 0, 5);
+      put(board, 'black', 'R', 8, 5);
+      if (checked) put(board, 'black', 'R', 4, 5); // gives check down the file to (4,9)
+      finalize(board);
+      const game = gameOn(board);
+      repeatTwice(game, move);
+      return game;
+    };
+
+    const chased = build(true);
+    expect(chased.inCheck('red')).toBe(true);
+    expect(chased.legalMoves('red')).toContainEqual(move);
+    // In check → exempt: the capture that would otherwise be a third occurrence is allowed.
+    expect(chased.wouldRepeat(move)).toBe(false);
+    expect(chased.isSelectable(move)).toBe(true);
+    expect(chased.selectableMoves('red')).toContainEqual(move);
+
+    const calm = build(false);
+    expect(calm.inCheck('red')).toBe(false);
+    expect(calm.legalMoves('red')).toContainEqual(move);
+    // Not in check → the same move is a third occurrence and is refused.
+    expect(calm.wouldRepeat(move)).toBe(true);
+    expect(calm.isSelectable(move)).toBe(false);
+    expect(calm.selectableMoves('red')).not.toContainEqual(move);
   });
 
   it('never lets the AI choose a forbidden move', () => {
     resetIds();
     const game = gameOn(cycleBoard());
-    for (const move of CYCLE.slice(0, 3)) game.apply(move);
+    for (const move of [...CYCLE, ...CYCLE.slice(0, 3)]) game.apply(move);
 
     // The AI's root list *is* `selectableMoves`, so the forbidden move is not merely unlikely — it is
     // not in the list the search ever sees.

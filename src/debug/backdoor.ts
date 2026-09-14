@@ -174,7 +174,7 @@ export interface Backdoor {
   /**
    * Plays a move through the same path the UI uses, and waits for the animations.
    *
-   * `true` means the move was **legal**, which is not the same as "it happened": a move that 禁止全局同形
+   * `true` means the move was **legal**, which is not the same as "it happened": a move that 禁止循环追棋
    * forbids is played all the way into `play()` so the refusal is exercised rather than bypassed, and it
    * comes back with `ply` unchanged and a `status` that names the rule (see `state()`).
    */
@@ -201,7 +201,7 @@ export interface Backdoor {
    */
   danger(): { mine: string[]; theirs: string[]; marks: number; on: boolean };
   /**
-   * The legal moves of the side to move, split by whether 禁止全局同形 allows them.
+   * The legal moves of the side to move, split by whether 禁止循环追棋 allows them.
    *
    * `forbidden` is the evidence for the rule: those moves are in `legal()` and are refused when played.
    */
