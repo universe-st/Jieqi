@@ -33,7 +33,7 @@ import Phaser from 'phaser';
  * `bgm-menu.mp3` / `bgm.mp3` / `bgm-win.mp3` / `bgm-lose.mp3` (see `scripts/build-audio.sh`).
  */
 export const BGM = {
-  /** 开始菜单 + 定先后. */
+  /** 开始菜单 — 定先后起即视为对局开始，走 game 曲（见 DrawScene）。 */
   menu: 'bgm-menu',
   /** 对局中 — the original track, unchanged. */
   game: 'bgm',

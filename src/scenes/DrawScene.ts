@@ -57,8 +57,9 @@ export class DrawScene extends Phaser.Scene {
     announceScreen('draw');
     applyRenderScale(this);
     buildTextures(this);
-    // The draw is still pre-game: the menu track keeps playing through the spin and the verdict.
-    this.audio.setBgm('menu');
+    // 定先后即对局开始：抽子、宣判、进棋盘全程用对局曲。GameScene 进入时同样
+    // setBgm('game')，同状态是 no-op，曲子无缝延续不重播。
+    this.audio.setBgm('game');
     this.audio.start(this);
     this.cameras.main.setBackgroundColor(C.backdrop);
     drawCurtain(this, { focusY: 0.46, focusRadius: DESIGN_WIDTH * 2.4 });
