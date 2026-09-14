@@ -9,6 +9,27 @@
 export type Color = 'red' | 'black';
 
 /**
+ * How a match is dealt and how a piece changes hands.
+ *
+ * - `standard` — 揭棋 proper: each side shuffles its own fifteen identities onto its own fifteen
+ *   starting squares, so a face-down piece always belongs to the half it stands on *and always was
+ *   that side's piece*. Turning it over only tells you what it is.
+ * - `mixed` — 混斗: both sides' non-king identities are shuffled together and dealt across the thirty
+ *   starting squares in one pool, so the piece under a 暗子 may belong to either side. While it is
+ *   face down it counts as the property of the half it stands on (rule M2), which is what lets its
+ *   owner-of-the-moment move it; turning it over hands it to whoever it really is (rule M4).
+ *
+ * Nothing else differs: the kings, the movement of a hidden piece, check, 困毙, 禁止全局同形 and the
+ * draw are all the same in both modes.
+ */
+export type GameMode = 'standard' | 'mixed';
+
+export const MODE_NAME: Readonly<Record<GameMode, string>> = {
+  standard: '标准玩法',
+  mixed: '混斗玩法',
+};
+
+/**
  * Piece kinds, using the conventional xiangqi letters.
  *
  * `K` 帅/将 · `A` 仕/士 · `E` 相/象 · `H` 马 · `R` 车 · `C` 炮 · `P` 兵/卒
@@ -52,6 +73,12 @@ export const FIRST_MOVER: Color = 'red';
  *
  * Once a hidden piece moves it is revealed (rule R5), `hidden` becomes `false`, and from then on only
  * `kind` drives its movement. `homeKind` is therefore fixed for the piece's whole life.
+ *
+ * `color` is always the piece's **true** colour, in both modes. Who the piece counts as *right now* is
+ * a different question, and it is asked of the board — `Board.ownerAt(sq)`. In 标准 the two always
+ * agree; in 混斗 a face-down piece belongs to the half it stands on (rule M2) and only becomes its own
+ * side's property once it is turned over (rule M4). Rules code must therefore reach for `ownerAt`
+ * whenever it means "whose piece is this", and for `piece.color` only when it means "what is this".
  */
 export interface Piece {
   /** Stable identity, used by the view to follow a piece across moves. */
@@ -87,6 +114,21 @@ export const ARMY: Readonly<Record<Kind, number>> = {
 export const ARMY_LIST: readonly Kind[] = [
   'A', 'A', 'E', 'E', 'H', 'H', 'R', 'R', 'C', 'C', 'P', 'P', 'P', 'P', 'P',
 ];
+
+/** A concrete piece identity: what a piece *is*, and whose it truly is. */
+export interface Identity {
+  readonly color: Color;
+  readonly kind: Kind;
+}
+
+/** Red's fifteen then black's fifteen — the thirty identities a 混斗 deal shuffles into one pool. */
+export function mixedArmy(): Identity[] {
+  const out: Identity[] = [];
+  for (const color of ['red', 'black'] as const) {
+    for (const kind of ARMY_LIST) out.push({ color, kind });
+  }
+  return out;
+}
 
 /** One starting square of the standard xiangqi setup, tagged with the kind that belongs there. */
 export interface StartSquare {
@@ -138,6 +180,16 @@ export const ownHalf = (color: Color, sq: number): boolean =>
 
 /** Has a piece of `color` on `sq` crossed the river? Drives the 兵/卒 sideways step. */
 export const crossedRiver = (color: Color, sq: number): boolean => !ownHalf(color, sq);
+
+/**
+ * Which side of the board a square belongs to — 黑's half is ranks 0–4, 红's is ranks 5–9.
+ *
+ * This is rule M2's whole definition: in 混斗 a face-down piece counts as belonging to the half it
+ * stands on. It works as "the side that dealt this square" because a face-down piece never moves
+ * (rule R4/R5: a hidden piece is turned over as part of its move), so it is always still standing on
+ * one of the thirty starting squares, fifteen per half.
+ */
+export const sideOfSquare = (sq: number): Color => (ownHalf('black', sq) ? 'black' : 'red');
 
 /** One step forward, which is towards the opponent: red marches up the board, black down. */
 export const forwardStep = (color: Color): number => (color === 'red' ? -1 : 1);

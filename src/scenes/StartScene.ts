@@ -23,15 +23,23 @@ import { Button, Column, Spacer, Text, render } from '@phaser-mvvm/widgets/compo
 
 import type { Difficulty } from '../ai';
 import { audioDirector, type AudioDirector } from '../audio/AudioDirector';
+import { MODE_NAME, type GameMode } from '../core/types';
 import { drawCurtain } from '../ui/backdrop';
-import { openDifficultyDialog, openVolumeDialog } from '../ui/dialogs';
+import { openDifficultyDialog, openModeDialog, openVolumeDialog } from '../ui/dialogs';
 import { C, DESIGN_HEIGHT, DESIGN_WIDTH, TITLE_STACK } from '../ui/palette';
 import { applyRenderScale } from '../ui/render-scale';
 import { SpinningPiece } from '../ui/SpinningPiece';
 import { buildTextures } from '../ui/textures';
 import { announceScreen } from './screen';
 import { DIFFICULTY_LABEL } from '../vm/GameViewModel';
-import { loadCaptureHint, loadDifficulty, saveCaptureHint, saveDifficulty } from '../vm/prefs';
+import {
+  loadCaptureHint,
+  loadDifficulty,
+  loadMode,
+  saveCaptureHint,
+  saveDifficulty,
+  saveMode,
+} from '../vm/prefs';
 
 /** Diameter of the emblem. Smaller than the draw's piece, which has the whole screen to itself. */
 const EMBLEM_DIAMETER = 148;
@@ -51,6 +59,13 @@ export class StartScene extends Phaser.Scene {
    * before the first move would silently do nothing.
    */
   private readonly captureHint = ref<boolean>(loadCaptureHint());
+  /**
+   * 标准 / 混斗 — asked for on the way into every match.
+   *
+   * Held here as well as passed down (draw → board) so the menu's entry can show what was chosen last
+   * time, and so a player who comes back to the menu does not have to remember which one they played.
+   */
+  private readonly mode = ref<GameMode>(loadMode());
   /** Set the moment a game is asked for, so a second tap cannot start a second one. */
   private leaving = false;
 
@@ -137,6 +152,13 @@ export class StartScene extends Phaser.Scene {
               name: 'startButton',
               onClick: () => this.beginGame(),
             });
+            // What the last match was played as. The dialog is where it changes; this is only so the
+            // choice is visible before pressing 开始游戏 again.
+            Text(() => `玩法 · ${MODE_NAME[this.mode.value]}`, {
+              size: 'xs',
+              tone: 'muted',
+              name: 'modeLabel',
+            });
             Button(() => `难度设置 · ${DIFFICULTY_LABEL[this.difficulty.value]}`, {
               variant: 'secondary',
               size: 'md',
@@ -174,14 +196,35 @@ export class StartScene extends Phaser.Scene {
   // Menu actions
   // ---------------------------------------------------------------------------------------------
 
-  /** 开始游戏 — hand over to the draw, which is what actually decides the colours. */
-  beginGame(): void {
+  /**
+   * 开始游戏 — ask 标准 or 混斗, then hand over to the draw, which decides the colours.
+   *
+   * `mode` short-circuits the question and is what the acceptance backdoor drives: a run that wants a
+   * 混斗 board should not have to click through a dialog to get one, and a run that wants to test *the
+   * dialog* can still press `mode_mixed` with a real mouse (the buttons are named).
+   */
+  beginGame(mode?: GameMode): void {
+    if (this.leaving) return;
+    this.audio.play('click');
+    if (mode) {
+      this.startWith(mode);
+      return;
+    }
+    openModeDialog(this.mvvm, this.mode.value, (picked) => {
+      this.mode.value = picked;
+      saveMode(picked);
+      this.audio.play('pick');
+      this.startWith(picked);
+    });
+  }
+
+  /** The hand-over itself: fade, then 定先后 with the chosen mode riding along. */
+  private startWith(mode: GameMode): void {
     if (this.leaving) return;
     this.leaving = true;
-    this.audio.play('click');
     this.cameras.main.fadeOut(240, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.start('draw');
+      this.scene.start('draw', { mode });
     });
   }
 
@@ -234,6 +277,16 @@ export class StartScene extends Phaser.Scene {
   setCaptureHintSetting(on: boolean): void {
     this.captureHint.value = on;
     saveCaptureHint(on);
+  }
+
+  /** 标准 / 混斗 as the menu is set to — what the next 开始游戏 will deal. */
+  get selectedMode(): GameMode {
+    return this.mode.value;
+  }
+
+  setMode(value: GameMode): void {
+    this.mode.value = value;
+    saveMode(value);
   }
 
   /** True once 开始游戏 has been pressed and the scene is on its way out. */

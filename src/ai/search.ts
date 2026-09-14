@@ -6,6 +6,12 @@
  * world* (see `pmc.ts`), where every face-down piece has been given a concrete identity. Legality is
  * world-independent — a face-down piece is moved by the square it stands on, which everyone can see —
  * so every world shares the same move list, and only the values differ.
+ *
+ * 混斗 adds one thing to that world: the identity a face-down piece draws carries a **colour**, so
+ * turning it over may hand it to the opponent (rule M4). Inside a world that is simply the truth, and
+ * this file plays it out as such — {@link Searcher.generateLegal} filters with the real consequence,
+ * which is why a line that hands the opponent a rook scores like the loss it is. The public move list
+ * (`rules.legalMoves`) is deliberately more permissive; see `isKingSafeAfter`.
  */
 
 import type { Board } from '../core/board';

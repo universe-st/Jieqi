@@ -12,11 +12,47 @@
  */
 
 import type { Difficulty } from '../ai';
+import type { GameMode } from '../core/types';
 
 const STORAGE_KEY = 'jieqi.prefs.v1';
 const HINT_KEY = 'jieqi.hints.v1';
+const MODE_KEY = 'jieqi.mode.v1';
 
 export const DEFAULT_DIFFICULTY: Difficulty = 'normal';
+
+/**
+ * 标准玩法 is the default, and the safe one: 混斗 changes what a 暗子 *is* — the same square can hand
+ * either side a piece — so it is a choice a player makes at 开始游戏 rather than something the board
+ * springs on them. It is remembered once made, because a player who wants 混斗 wants it every time.
+ */
+export const DEFAULT_MODE: GameMode = 'standard';
+
+export function isGameMode(value: unknown): value is GameMode {
+  return value === 'standard' || value === 'mixed';
+}
+
+/**
+ * The way to play, stored under its own key for the same reason 吃子提示 is: one key per setting means
+ * the difficulty's writer cannot silently drop the mode, and vice versa.
+ */
+export function loadMode(): GameMode {
+  try {
+    const raw = localStorage.getItem(MODE_KEY);
+    if (!raw) return DEFAULT_MODE;
+    const parsed = JSON.parse(raw) as { mode?: unknown };
+    return isGameMode(parsed.mode) ? parsed.mode : DEFAULT_MODE;
+  } catch {
+    return DEFAULT_MODE;
+  }
+}
+
+export function saveMode(value: GameMode): void {
+  try {
+    localStorage.setItem(MODE_KEY, JSON.stringify({ mode: value }));
+  } catch {
+    // As everywhere else here: a preference that cannot be saved must not stop a game.
+  }
+}
 
 /**
  * 吃子提示 defaults to **off**.

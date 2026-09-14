@@ -12,9 +12,11 @@ import {
   SQUARES,
   START_SQUARES,
   type Color,
+  type Identity,
   type Kind,
   type Piece,
   other,
+  sideOfSquare,
   squareOf,
 } from './types';
 
@@ -91,6 +93,16 @@ export class Board {
   kingSq: Record<Color, number> = { red: -1, black: -1 };
   h1 = 0;
   h2 = 0;
+  /**
+   * 混斗 (rule M2): while this is set, a face-down piece belongs to the half of the board it stands on
+   * rather than to the side whose colour it carries — and it may turn out to be the *other* side's
+   * piece the moment it is turned over (rule M4).
+   *
+   * The flag lives on the board rather than being threaded through every call because every question
+   * about ownership is asked of the board anyway (`ownerAt`, `piecesOf`, `generateMoves`), and the
+   * board is the one object that is cloned and un-made wholesale by the search.
+   */
+  mixed = false;
 
   static empty(): Board {
     return new Board();
@@ -131,6 +143,54 @@ export class Board {
     return board;
   }
 
+  /**
+   * 混斗's deal (rules M1–M3): both kings face up on their home squares exactly as in 标准, and the
+   * thirty non-king identities — red's fifteen **and** black's fifteen — shuffled into a single pool
+   * and dealt one per remaining starting square.
+   *
+   * The square decides two things and the identity decides one:
+   *
+   * - `homeKind` comes from the square, so a 暗子 still moves as the piece that square started with
+   *   (rule R4 is untouched by 混斗);
+   * - the *temporary* owner comes from the square too, which is what `ownerAt` reads;
+   * - `color` and `kind` are the truth, and in 混斗 they may disagree with the square.
+   *
+   * `identities` supplies the order; the caller owns the randomness so a seed reproduces a game.
+   */
+  static dealMixed(identities: readonly Identity[], nextIdStart = 1): Board {
+    const board = new Board();
+    board.mixed = true;
+    let id = nextIdStart;
+    let index = 0;
+    for (const color of ['black', 'red'] as const) {
+      for (const start of START_SQUARES[color]) {
+        if (start.kind === 'K') {
+          board.squares[start.square] = {
+            id: id++,
+            color,
+            kind: 'K',
+            homeKind: 'K',
+            hidden: false,
+          };
+          board.kingSq[color] = start.square;
+          continue;
+        }
+        const identity = identities[index++];
+        if (!identity) throw new Error('dealMixed: identity pool exhausted');
+        board.squares[start.square] = {
+          id: id++,
+          color: identity.color,
+          kind: identity.kind,
+          homeKind: start.kind,
+          hidden: true,
+        };
+      }
+    }
+    board.side = 'red';
+    board.rehash();
+    return board;
+  }
+
   clone(): Board {
     const copy = new Board();
     for (let i = 0; i < SQUARES; i++) copy.squares[i] = this.squares[i] ?? null;
@@ -138,11 +198,25 @@ export class Board {
     copy.kingSq = { red: this.kingSq.red, black: this.kingSq.black };
     copy.h1 = this.h1;
     copy.h2 = this.h2;
+    copy.mixed = this.mixed;
     return copy;
   }
 
   at(sq: number): Piece | null {
     return this.squares[sq] ?? null;
+  }
+
+  /**
+   * The side the piece on `sq` counts as **right now** — the only notion of ownership the rules use.
+   *
+   * In 标准 this is simply `piece.color`. In 混斗 a face-down piece is owned by the half it stands on
+   * (rule M2: 在自己这边的暗子归属权暂时归自己), so the square decides; a face-up piece is owned by
+   * whoever it turned out to be (rule M4). `null` for an empty square.
+   */
+  ownerAt(sq: number): Color | null {
+    const piece = this.squares[sq];
+    if (!piece) return null;
+    return this.mixed && piece.hidden ? sideOfSquare(sq) : piece.color;
   }
 
   get key(): number {
@@ -208,6 +282,12 @@ export class Board {
     this.h2 ^= Z.z2[to * CODE_COUNT + codeOf(next)] as number;
 
     if (next.kind === 'K') this.kingSq[next.color] = to;
+    // 混斗 can hand the mover's own general to the opponent (rule M4: 翻开后归属权变成对方), and a
+    // general standing attacked with the opponent to move is a general that simply gets taken. Clearing
+    // the square keeps `isKingSafe` honest afterwards — "no king" reads as attacked — and `unmakeMove`
+    // puts it back from the undo record. In 标准 this can never fire: a move that leaves one's own
+    // general attacked is not legal.
+    if (captured && captured.kind === 'K') this.kingSq[captured.color] = -1;
 
     this.side = other(this.side);
     this.h1 ^= Z.side1;
@@ -226,12 +306,12 @@ export class Board {
     this.h2 = undo.prevH2;
   }
 
-  /** Every piece of `color` still on the board, with its square. */
+  /** Every piece `color` currently owns, with its square. In 混斗 that is `ownerAt`, not `piece.color`. */
   piecesOf(color: Color): { square: number; piece: Piece }[] {
     const out: { square: number; piece: Piece }[] = [];
     for (let sq = 0; sq < SQUARES; sq++) {
       const piece = this.squares[sq];
-      if (piece && piece.color === color) out.push({ square: sq, piece });
+      if (piece && this.ownerAt(sq) === color) out.push({ square: sq, piece });
     }
     return out;
   }
@@ -244,19 +324,37 @@ export class Board {
     return null;
   }
 
-  /** Counts of a side's pieces by *true* identity — engine-side only, never shown to a player. */
+  /**
+   * Counts of a side's pieces by *true* identity — engine-side only, never shown to a player.
+   *
+   * Keyed by `piece.color`, not by `ownerAt`: in 混斗 a 暗子 on your half that is really the
+   * opponent's is *not* part of your army, and this count is what says so.
+   */
   countsByKind(color: Color): Record<Kind, number> {
     const counts: Record<Kind, number> = { K: 0, A: 0, E: 0, H: 0, R: 0, C: 0, P: 0 };
-    for (const { piece } of this.piecesOf(color)) counts[piece.kind] += 1;
+    for (let sq = 0; sq < SQUARES; sq++) {
+      const piece = this.squares[sq];
+      if (piece && piece.color === color) counts[piece.kind] += 1;
+    }
     return counts;
   }
 
-  /** Squares of a side's faces-down pieces, in ascending square order (canonical for sampling). */
+  /** Squares of the face-down pieces `color` owns right now, in ascending square order. */
   hiddenSquares(color: Color): number[] {
+    return this.allHiddenSquares().filter((sq) => this.ownerAt(sq) === color);
+  }
+
+  /**
+   * Every face-down piece still on the board, ascending — the squares a 混斗 world has to fill.
+   *
+   * In 混斗 the identities on those squares are drawn from one shared pool (see `info.mixedPoolFor`),
+   * so the sampling needs them all at once rather than split by side.
+   */
+  allHiddenSquares(): number[] {
     const out: number[] = [];
     for (let sq = 0; sq < SQUARES; sq++) {
       const piece = this.squares[sq];
-      if (piece && piece.color === color && piece.hidden) out.push(sq);
+      if (piece && piece.hidden) out.push(sq);
     }
     return out;
   }

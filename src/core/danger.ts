@@ -9,7 +9,9 @@
  * 3. **The capture is legal for the enemy** — taking the piece would not leave the enemy's own general
  *    attacked. 送将 is the whole of clause 3: a capture that loses the general is not a threat, it is a
  *    blunder the opponent is not allowed to make, and calling such a piece "in danger" would be a lie
- *    with consequences (the hint would push the player to defend a piece nobody can take).
+ *    with consequences (the hint would push the player to defend a piece nobody can take). The reading
+ *    is `isKingSafeAfter`, i.e. the same public one the move list uses, so in 混斗 clause 3 does not
+ *    peek at what a 暗子 would turn out to be either.
  *
  * ## Why this leaks nothing
  *
@@ -20,16 +22,8 @@
  */
 
 import type { Board } from './board';
-import { generateMoves, isSquareAttacked, isKingSafe } from './moves';
+import { generateMoves, isSquareAttacked, isKingSafeAfter } from './moves';
 import { type Color, type Move, other } from './types';
-
-/** Does `color` keep their own general after playing `move`? The 送将 test of clause 3. */
-function keepsKingSafe(board: Board, color: Color, move: Move): boolean {
-  const undo = board.makeMove(move.from, move.to);
-  const safe = isKingSafe(board, color);
-  board.unmakeMove(undo);
-  return safe;
-}
 
 /**
  * Is the piece standing on `square` hanging — capturable for free by the other side?
@@ -41,18 +35,54 @@ function keepsKingSafe(board: Board, color: Color, move: Move): boolean {
  */
 export function isHanging(board: Board, square: number): boolean {
   const piece = board.at(square);
+  if (!piece) return false;
+  // Owner, not `piece.color`: in 混斗 a 暗子 on my half is mine, and the question "can the *other* side
+  // take it" has to be asked about the side that can actually move it (rule M2).
+  return isHangingFor(board, square, board.ownerAt(square) ?? piece.color);
+}
+
+/**
+ * The same question asked about a *named* owner rather than about whatever the board says.
+ *
+ * This is what the board's target rings use: "if I move there, would **my** piece be hanging?" has to
+ * be answered about the mover, because in 混斗 the piece that arrives may turn out to be the
+ * opponent's — and asking `isHanging` then would both answer the wrong question (is the piece I just
+ * handed over capturable by me?) and leak the hidden identity through the colour of a ring.
+ */
+export function isHangingFor(board: Board, square: number, owner: Color): boolean {
+  const piece = board.at(square);
   if (!piece || piece.kind === 'K') return false;
 
-  const enemy = other(piece.color);
+  const enemy = other(owner);
   const threatened = generateMoves(board, enemy, []).some(
-    (move) => move.to === square && keepsKingSafe(board, enemy, move),
+    (move) => move.to === square && isKingSafeAfter(board, enemy, move),
   );
   if (!threatened) return false;
 
   // Defended: a friendly piece covers the square, so taking would only trade into a recapture. The
   // attack map is the right question here — "would there be a piece to take back with" — which is the
   // same semantics the rules tests use as their oracle.
-  return !isSquareAttacked(board, square, piece.color);
+  return !isSquareAttacked(board, square, owner);
+}
+
+/**
+ * Would the piece **land** hanging if `mover` played `move`? The board's red/green target rings.
+ *
+ * The difference from `isHanging` is the only thing this function exists for: it is asked *before* the
+ * move, about the piece the mover is holding, so the arrival is judged as the **mover's** piece —
+ * which in 混斗 is a decision, because the piece may turn out to be the opponent's (rule M4). Judging
+ * it afterwards would answer a different question (is the piece I just handed over capturable by me?)
+ * and would let the colour of a ring read a 暗子's identity off the board.
+ */
+export function landsHangingAs(board: Board, move: Move, mover: Color): boolean {
+  const undo = board.makeMove(move.from, move.to);
+  const moved = board.at(move.to);
+  const borrowed = moved && moved.color !== mover ? { ...moved, color: mover } : null;
+  if (borrowed) board.squares[move.to] = borrowed;
+  const hanging = isHangingFor(board, move.to, mover);
+  if (borrowed && moved) board.squares[move.to] = moved;
+  board.unmakeMove(undo);
+  return hanging;
 }
 
 /**
@@ -67,7 +97,7 @@ export function hangingSquares(board: Board, color: Color): number[] {
   const out: number[] = [];
   for (const { square, piece } of board.piecesOf(color)) {
     if (piece.kind === 'K') continue;
-    const threatened = enemyMoves.some((move) => move.to === square && keepsKingSafe(board, enemy, move));
+    const threatened = enemyMoves.some((move) => move.to === square && isKingSafeAfter(board, enemy, move));
     if (!threatened) continue;
     if (isSquareAttacked(board, square, color)) continue;
     out.push(square);

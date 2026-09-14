@@ -31,11 +31,18 @@ import {
 
 import { DIFFICULTY, analyse, chooseMoveAsync, type Difficulty, type ScoredMove } from '../ai';
 import { audioDirector, type AudioDirector } from '../audio/AudioDirector';
-import { hangingSquares, isHanging } from '../core/danger';
-import { generateMoves, isKingSafe, isSquareAttacked } from '../core/moves';
+import { hangingSquares, landsHangingAs } from '../core/danger';
+import { generateMoves, isKingSafeAfter, isSquareAttacked } from '../core/moves';
 import { JieqiGame, type MoveEvent } from '../core/rules';
 import { randomSeed } from '../core/rng';
-import { FIRST_MOVER, type Color, type Move, KIND_NAME } from '../core/types';
+import {
+  COLOR_NAME,
+  FIRST_MOVER,
+  type Color,
+  type GameMode,
+  type Move,
+  KIND_NAME,
+} from '../core/types';
 import { BoardView, type BoardCue, type DangerMark } from '../ui/BoardView';
 import { openDifficultyDialog, openVolumeDialog } from '../ui/dialogs';
 import { banner, petalFall, screenWash, withTimeout } from '../ui/fx';
@@ -45,12 +52,14 @@ import { CHIP_DISPLAY, TEX, buildTextures, chipTexture } from '../ui/textures';
 import { DIFFICULTY_LABEL, GameViewModel } from '../vm/GameViewModel';
 import { loadCaptureHint, loadDifficulty, saveCaptureHint, saveDifficulty } from '../vm/prefs';
 import { announceScreen } from './screen';
-import { captureLabel, trayChips, type CapturedChip } from '../vm/tray';
+import { captureLabel, mixedTrayChips, trayChips, type CapturedChip } from '../vm/tray';
 
 /** What the draw screen hands the board. Absent when a scene is started directly (tests, backdoor). */
 export interface GameSceneData {
   /** The colour the player drew. Defaults to 红, which is also who moves first. */
   player?: Color;
+  /** 标准 or 混斗, chosen at the menu. Defaults to 标准. */
+  mode?: GameMode;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -79,6 +88,7 @@ export class GameScene extends Phaser.Scene {
   /** Takes the drawn colour from the draw screen before anything is built. */
   init(data: GameSceneData = {}): void {
     this.vm.setPlayer(data.player ?? FIRST_MOVER);
+    this.vm.mode.value = data.mode ?? 'standard';
     this.vm.difficulty.value = loadDifficulty();
     this.vm.captureHint.value = loadCaptureHint();
     // A scene that was left mid-move comes back with the previous match's bookkeeping still in place —
@@ -215,6 +225,9 @@ export class GameScene extends Phaser.Scene {
       () => {
         Row({ width: 'fill', alignItems: 'center', gap: 8 }, () => {
           Text('揭 棋', { size: 'lg', name: 'title' });
+          // 混斗 changes what a 暗子 *is*, so the board says which game this is rather than leaving the
+          // player to work it out from a piece that walked over to the other side.
+          Text(() => vm.modeBadge.value, { size: 'xs', tone: 'muted', name: 'modeBadge' });
           Spacer({ flex: true });
           Text(() => vm.thinkingText.value, {
             size: 'sm',
@@ -255,7 +268,7 @@ export class GameScene extends Phaser.Scene {
               });
               Text(() => vm.aiName.value, { size: 'md', name: 'aiName' });
               Spacer({ flex: true });
-              Text(() => `吃掉我方 ${vm.aiTrayCount.value} 子`, { size: 'xs', tone: 'muted' });
+              Text(() => vm.aiTrayLabel.value, { size: 'xs', tone: 'muted' });
             });
             this.trayStrip(
               () => vm.aiTray.value,
@@ -296,7 +309,7 @@ export class GameScene extends Phaser.Scene {
               Text(() => vm.playerName.value, { size: 'md', name: 'playerName' });
               Text(() => vm.seatLabel.value, { size: 'xs', tone: 'muted', name: 'seatLabel' });
               Spacer({ flex: true });
-              Text(() => `吃掉敌方 ${vm.playerTrayCount.value} 子`, { size: 'xs', tone: 'muted' });
+              Text(() => vm.playerTrayLabel.value, { size: 'xs', tone: 'muted' });
             });
             this.trayStrip(() => vm.playerTray.value, 'playerTray', '你吃掉的棋子会摆在这里');
             Text(() => vm.status.value, { size: 'sm', tone: 'muted', name: 'statusLabel' });
@@ -344,8 +357,12 @@ export class GameScene extends Phaser.Scene {
             width: 60,
             name: 'newGameButton',
             onClick: this.tap(() =>
-              this.confirm('重新定先后', '当前对局将结束，重新抽子决定执子方。', () =>
-                this.redraw(),
+              // Says which game is being re-dealt: 新局 keeps the mode, so a player who wants to go
+              // back to 标准 has to leave through 菜单.
+              this.confirm(
+                '重新定先后',
+                `当前对局将结束，重新抽子决定执子方（玩法保持：${this.vm.modeLabel.value}）。`,
+                () => this.redraw(),
               ),
             ),
           });
@@ -406,7 +423,7 @@ export class GameScene extends Phaser.Scene {
   async startNewGame(seed: number): Promise<void> {
     this.enter();
     try {
-      this.jieqi = JieqiGame.create({ seed });
+      this.jieqi = JieqiGame.create({ seed, mode: this.vm.mode.value });
       this.selected = null;
       this.legalForSelected = [];
       this.sendsCheck = new Set();
@@ -458,17 +475,30 @@ export class GameScene extends Phaser.Scene {
       color: event.color,
       notation: event.notation,
     }));
-    vm.playerTray.value = this.trayOf(this.ai);
-    vm.aiTray.value = this.trayOf(this.player);
+    // 标准 fills a tray by the *colour of the pieces in it* (only the enemy's can be taken); 混斗 fills
+    // it by *who did the taking*, because a red piece can end up in red's own tray there. Either way
+    // the two trays are the two sides of the board.
+    const mixed = this.jieqi.mode === 'mixed';
+    vm.playerTray.value = this.trayOf(mixed ? this.player : this.ai, mixed);
+    vm.aiTray.value = this.trayOf(mixed ? this.ai : this.player, mixed);
     vm.result.value = this.jieqi.result;
   }
 
-  /** The player's view of one tray. The rule itself lives in `src/vm/tray.ts`, where it is tested. */
-  private trayOf(capturedColor: Color): CapturedChip[] {
-    return trayChips(this.jieqi.moveEvents, this.player, capturedColor, {
+  /**
+   * The player's view of one tray. The rule itself lives in `src/vm/tray.ts`, where it is tested.
+   *
+   * `key` is the captured colour in 标准 and the capturer in 混斗 — the two modes ask the same question
+   * ("which pieces belong in this strip, and what may the player see?") with a different name for the
+   * side, and `mixed` is what picks which reading is meant.
+   */
+  private trayOf(key: Color, mixed: boolean): CapturedChip[] {
+    const options = {
       // 对局结束，暗子的身份不再需要保密：摊开的棋盘上已经写着它们是什么了（见 BoardView.revealHidden）。
       revealHidden: this.jieqi.result !== null,
-    });
+    };
+    return mixed
+      ? mixedTrayChips(this.jieqi.moveEvents, this.player, key, options)
+      : trayChips(this.jieqi.moveEvents, this.player, key, options);
   }
 
   /** The colour the draw handed the player. */
@@ -516,7 +546,10 @@ export class GameScene extends Phaser.Scene {
       this.refuseCheckGiveaway();
       return;
     }
-    if (piece && piece.color === this.player) {
+    // Ownership, not `piece.color`: in 混斗 a 暗子 on the player's half is theirs to pick up whoever it
+    // turns out to be (rule M2) — and the engine would refuse the move anyway, which would read as a
+    // dead piece rather than as the mode working.
+    if (piece && this.jieqi.board.ownerAt(square) === this.player) {
       this.selected = square;
       this.legalForSelected = this.jieqi
         .legalMoves(this.player)
@@ -524,10 +557,17 @@ export class GameScene extends Phaser.Scene {
       this.sendsCheck = this.sendsCheckOf(square);
       this.board.setSelection(square);
       this.board.setLegalTargets(
-        this.legalForSelected.map((move) => ({ square: move.to, danger: this.landsHanging(move) })),
+        this.legalForSelected.map((move) => ({
+          square: move.to,
+          danger: landsHangingAs(this.jieqi.board, move, this.player),
+        })),
       );
       this.board.setSendsCheck(this.sendsCheck);
-      const label = KIND_NAME[this.player][piece.hidden ? piece.homeKind : piece.kind];
+      // The label follows the same reading: a 暗子 is named after its square, in the mover's colour
+      // naming, so a 暗卒 on red's half is offered as a 暗兵.
+      const label = piece.hidden
+        ? KIND_NAME[this.player][piece.homeKind]
+        : KIND_NAME[piece.color][piece.kind];
       // Targets that 禁止全局同形 forbids are offered like any other — tapping one is how the player
       // finds out, and refusing by name beats hiding a square and leaving them to wonder why it is not
       // there — but the count says up front that some of them are not available.
@@ -575,22 +615,13 @@ export class GameScene extends Phaser.Scene {
     const out = new Set<number>();
     for (const move of generateMoves(board, this.player, [])) {
       if (move.from !== square) continue;
-      const undo = board.makeMove(move.from, move.to);
-      const safe = isKingSafe(board, this.player);
-      board.unmakeMove(undo);
-      if (!safe) out.add(move.to);
+      // The same reading the legal move list uses, which in 混斗 deliberately ignores what a 暗子 turns
+      // out to be: 送将 is about the general the player can see exposed, not about the coin landing.
+      if (!isKingSafeAfter(board, this.player, move)) out.add(move.to);
     }
     return out;
   }
 
-  /** Would the piece stand hanging — capturable for free, with no friendly protection — after this move? */
-  private landsHanging(move: Move): boolean {
-    const board = this.jieqi.board;
-    const undo = board.makeMove(move.from, move.to);
-    const hanging = isHanging(board, move.to);
-    board.unmakeMove(undo);
-    return hanging;
-  }
 
   /** Plays a move and then, if the game has not ended, lets the AI answer. */
   async play(move: Move, byPlayer: boolean): Promise<void> {
@@ -667,17 +698,64 @@ export class GameScene extends Phaser.Scene {
     this.syncVm();
     const parts: string[] = [`${event.color === 'red' ? '红' : '黑'} ${event.notation}`];
     if (event.wasHidden && event.revealedKind) {
-      parts.push(`翻出${KIND_NAME[event.color][event.revealedKind]}`);
+      // The face is named by what the piece *is*, not by who moved it: 混斗 can turn a mover's 暗兵
+      // into the opponent's 卒, and calling that a 兵 would be the board lying about its own picture.
+      const revealed = event.revealedColor ?? event.color;
+      const name = KIND_NAME[revealed][event.revealedKind];
+      if (this.jieqi.mode !== 'mixed') parts.push(`翻出${name}`);
+      else if (revealed === event.color) parts.push(`翻出己方${name}`);
+      else parts.push(`翻出敌方${name} · 易主`);
     }
     if (event.captured) {
       // Rule R7 per observer: name the kind only when the player is entitled to it — the piece was
       // face up in front of everybody, or the player is the capturer who turned it over. The loser of
       // a face-down piece must not learn what their own 暗子 was, so that capture reads 吃暗子.
-      parts.push(captureLabel(event.captured, this.player));
+      parts.push(captureLabel(event.captured, this.player, event.color));
     }
     this.vm.status.value = parts.join(' · ');
     this.board.setLastMove(event.move);
+    // 混斗 only: the piece the player just played was not theirs. Said out loud, because the picture —
+    // a 卒 appearing in red's half — is easy to miss, and what it means is not: the piece is the
+    // opponent's from here on. The computer's own hand-overs are left to the status line, so the
+    // banner stays something the player only ever sees about their own moves.
+    const handedOver =
+      event.wasHidden && event.revealedColor !== null && event.revealedColor !== event.color;
+    if (handedOver && !event.selfCheck && event.color === this.player && event.revealedKind) {
+      const gone = KIND_NAME[event.revealedColor as Color][event.revealedKind];
+      void banner(this, '易 主', `${gone}已归${COLOR_NAME[event.revealedColor as Color]}`, C.gold, {
+        holdMs: 700,
+      });
+    }
+    // 混斗 only: the piece just handed itself to the opponent and is checking the side that moved it.
+    // Announced ahead of the ordinary 将军, because it is the more surprising of the two — and the
+    // general it points at is the *mover's*, not the side to move.
+    if (event.selfCheck) {
+      this.announceSelfCheck(event);
+      return;
+    }
     this.announceCheck();
+  }
+
+  /**
+   * 反将自身 — a reveal that handed the opponent a check on the side that played it.
+   *
+   * Only 混斗 can produce this (rule M4): the piece stood on the mover's half, so it was the mover's to
+   * move, but it turned out to belong to the opponent and it now attacks the general of the side that
+   * has just played it. The move stands — that bet is what the mode is made of — and the board says so,
+   * because a 将军 glow with no explanation on the wrong side of the board reads as a bug.
+   */
+  private announceSelfCheck(event: MoveEvent): void {
+    const kingSquare = this.jieqi.board.kingSq[event.color];
+    this.board.setCheckSquare(kingSquare >= 0 ? kingSquare : null);
+    const loser = COLOR_NAME[event.color];
+    this.vm.status.value = `${loser}翻出的棋子归对方所有，反被将军！`;
+    if (this.jieqi.result) return;
+    this.audio.play('check');
+    screenWash(this, C.check, 0.18);
+    const mine = event.color === this.player;
+    void banner(this, '反 将', mine ? '翻出敌方棋子 · 请解将' : '电脑翻出敌子 · 反将自身', C.check, {
+      holdMs: 760,
+    });
   }
 
   /** Flashes the banner and highlights the general when somebody is in check. */
@@ -828,7 +906,9 @@ export class GameScene extends Phaser.Scene {
     this.audio.play('click');
     this.cameras.main.fadeOut(280, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.start(key);
+      // 新局 redraws the colour but not the rules: the mode is a decision about the game, and coming
+      // back through 定先后 should not quietly change it back to 标准. 菜单 → 开始游戏 asks again.
+      this.scene.start(key, key === 'draw' ? { mode: this.vm.mode.value } : undefined);
     });
   }
 
@@ -962,6 +1042,11 @@ export class GameScene extends Phaser.Scene {
   /** The colour the computer plays. */
   get aiColor(): Color {
     return this.ai;
+  }
+
+  /** 标准 or 混斗 — what this match was dealt as. */
+  get gameMode(): GameMode {
+    return this.vm.mode.value;
   }
 
   get isBusy(): boolean {

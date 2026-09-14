@@ -5,22 +5,37 @@
  * players do not, and {@link MoveEvent} is the boundary. It carries only what a player at the board
  * would have seen: the identity a piece turned into when it was revealed, and nothing at all about a
  * face-down piece that was captured (rule R7: it is removed face down and its owner may not look).
+ *
+ * 混斗 adds one wrinkle to that boundary: a revealed piece may turn out to be the *opponent's*
+ * (rule M4), in which case the event says so as well — `revealedColor` carries what the piece is, and
+ * a mismatch with `color` is the hand-over everybody just watched.
  */
 
 import { Board, type Undo } from './board';
 import {
   cloneKnowledge,
   createKnowledge,
+  mixedPoolFor,
   noteLearned,
   noteRevealed,
   poolsFor,
   type Knowledge,
   type Pool,
 } from './info';
-import { generateMoves, isKingSafe } from './moves';
+import { generateMoves, isKingSafe, isKingSafeAfter } from './moves';
 import { toChineseNotation } from './notation';
 import { createRng, randomSeed } from './rng';
-import { ARMY_LIST, type Color, type Kind, type Move, other, sameMove } from './types';
+import {
+  ARMY_LIST,
+  type Color,
+  type GameMode,
+  type Identity,
+  type Kind,
+  type Move,
+  mixedArmy,
+  other,
+  sameMove,
+} from './types';
 
 export type ResultKind =
   | 'checkmate'
@@ -64,6 +79,22 @@ export interface MoveEvent {
   readonly wasHidden: boolean;
   /** What the piece turned into when it was flipped. Public: both players saw it. */
   readonly revealedKind: Kind | null;
+  /**
+   * The colour that face belongs to — what the piece *is*.
+   *
+   * Equal to `color` in 标准 and in the ordinary 混斗 case (a 暗子 on your half that turns out to be
+   * yours). When it differs, rule M4 fired: the piece the mover just played now belongs to the
+   * opponent, and the view has to say so.
+   */
+  readonly revealedColor: Color | null;
+  /**
+   * Did this move leave the **mover's own** general attacked?
+   *
+   * Impossible in 标准 (such a move is not legal) and possible in 混斗, where turning a 暗子 over can
+   * hand the opponent a piece that checks the side that moved it (rule M4/M5). The general is then
+   * simply taken by the opponent unless it can be answered.
+   */
+  readonly selfCheck: boolean;
   readonly captured: CapturedInfo | null;
   /** Did this move put the opponent in check? Drives the 将军 animation. */
   readonly gaveCheck: boolean;
@@ -86,6 +117,8 @@ export interface GameOptions {
   idlePlies?: number;
   /** Seed for the deal. Omit for a `Math.random`-derived one. */
   seed?: number;
+  /** 标准 or 混斗. Defaults to 标准 — the game this engine was written for. */
+  mode?: GameMode;
 }
 
 /**
@@ -105,6 +138,8 @@ export interface GameOptions {
 export class JieqiGame {
   readonly seed: number;
   readonly idlePlies: number;
+  /** 标准 or 混斗. Fixed for the life of the match, and carried into every clone. */
+  readonly mode: GameMode;
   board: Board;
   /** Who has seen what. Ask it for a pool with `poolsFor()` before sampling a world. */
   knowledge: Knowledge;
@@ -115,23 +150,35 @@ export class JieqiGame {
 
   private repetitions = new Map<number, number>();
 
-  private constructor(board: Board, knowledge: Knowledge, seed: number, idlePlies: number) {
+  private constructor(
+    board: Board,
+    knowledge: Knowledge,
+    seed: number,
+    idlePlies: number,
+    mode: GameMode,
+  ) {
     this.board = board;
     this.knowledge = knowledge;
     this.seed = seed;
     this.idlePlies = idlePlies;
+    this.mode = mode;
     this.bump(board.key);
   }
 
   /** Deals a fresh game: king face up on its home square, everything else shuffled face down. */
   static create(options: GameOptions = {}): JieqiGame {
     const seed = options.seed ?? randomSeed();
+    const mode = options.mode ?? 'standard';
     const rng = createRng(seed);
-    const shuffled: Record<Color, Kind[]> = {
-      red: rng.shuffle([...ARMY_LIST]),
-      black: rng.shuffle([...ARMY_LIST]),
-    };
-    return new JieqiGame(Board.deal(shuffled), createKnowledge(), seed, options.idlePlies ?? 80);
+    // 混斗 deals both armies out of one pool (rule M1); 标准 keeps each army on its own half (rule R3).
+    const board =
+      mode === 'mixed'
+        ? Board.dealMixed(rng.shuffle(mixedArmy()))
+        : Board.deal({
+            red: rng.shuffle([...ARMY_LIST]),
+            black: rng.shuffle([...ARMY_LIST]),
+          });
+    return new JieqiGame(board, createKnowledge(), seed, options.idlePlies ?? 80, mode);
   }
 
   /** A copy sharing no mutable state — the AI runs its searches on one of these. */
@@ -141,6 +188,7 @@ export class JieqiGame {
       cloneKnowledge(this.knowledge),
       this.seed,
       this.idlePlies,
+      this.mode,
     );
     copy.history = [];
     copy.result = this.result;
@@ -157,6 +205,11 @@ export class JieqiGame {
   /** The identities `observer` still cannot account for, on both sides. */
   poolsFor(observer: Color): Pool {
     return poolsFor(this.knowledge, observer);
+  }
+
+  /** 混斗's pool: the thirty identities, minus everything `observer` has seen or learned. */
+  mixedPoolFor(observer: Color): Identity[] {
+    return mixedPoolFor(this.knowledge, observer);
   }
 
   get ply(): number {
@@ -185,15 +238,18 @@ export class JieqiGame {
    * Every move that is legal in the ordinary sense: the piece can get there and the mover's own king
    * is not left attacked. Check legality does not depend on any hidden information — a hidden piece's
    * threats are computed from the square it stands on, which both players can see.
+   *
+   * 混斗 keeps that promise by judging the general with {@link isKingSafeAfter}: turning a 暗子 over
+   * may hand it to the opponent, and a move list that knew which squares would do that would be
+   * reading the hidden identity out loud. So the test is the ordinary 送将 one — *with this piece
+   * still mine, is my general exposed?* — and the hand-over's own consequences land afterwards, as
+   * `apply()` reports them in `selfCheck`.
    */
   legalMoves(color: Color = this.board.side): Move[] {
     const pseudo = generateMoves(this.board, color, []);
     const legal: Move[] = [];
     for (const move of pseudo) {
-      const undo = this.board.makeMove(move.from, move.to);
-      const safe = isKingSafe(this.board, color);
-      this.board.unmakeMove(undo);
-      if (safe) legal.push(move);
+      if (isKingSafeAfter(this.board, color, move)) legal.push(move);
     }
     return legal;
   }
@@ -242,7 +298,9 @@ export class JieqiGame {
     const color = board.side;
     const piece = board.at(move.from);
     if (!piece) throw new Error(`apply: no piece on square ${move.from}`);
-    if (piece.color !== color) throw new Error('apply: not your piece');
+    // Ownership, not `piece.color`: in 混斗 a 暗子 on my half is mine to move whoever it turns out to
+    // be (rule M2).
+    if (board.ownerAt(move.from) !== color) throw new Error('apply: not your piece');
     if (!this.isLegal(move, color)) throw new Error('apply: illegal move');
     // 禁止全局同形 is a rule of the game, so it is enforced where the game is, not only where the taps
     // are read: the UI refuses such a move *by name* before it gets here (and the AI never picks one,
@@ -261,12 +319,19 @@ export class JieqiGame {
     const lastMoveBefore = this.lastMove;
 
     const boardUndo = board.makeMove(move.from, move.to);
-    if (wasHidden) noteRevealed(this.knowledge, color, piece.kind);
+    // A reveal is public, and what it reveals is the piece's *true* colour — which in 混斗 is not
+    // necessarily the colour of the side that moved it (rule M4).
+    if (wasHidden) noteRevealed(this.knowledge, piece.color, piece.kind);
     // Rule R7 read carefully: the *loser* may not look, so `color` — the capturer — does.
-    if (capturedPiece?.hidden) noteLearned(this.knowledge, color, capturedPiece.kind);
+    if (capturedPiece?.hidden) {
+      noteLearned(this.knowledge, color, capturedPiece.kind, capturedPiece.color);
+    }
 
     const opponent = other(color);
     const gaveCheck = this.inCheck(opponent);
+    // 混斗 only: the piece just turned over may have gone to the opponent, and it may be checking the
+    // side that moved it. Legal, and reported — the general is then the opponent's for the taking.
+    const selfCheck = !isKingSafe(board, color);
     this.halfMoveClock = capturedPiece ? 0 : this.halfMoveClock + 1;
     this.lastMove = move;
     this.bump(board.key);
@@ -278,6 +343,8 @@ export class JieqiGame {
       moverKind: piece.kind,
       wasHidden,
       revealedKind: wasHidden ? piece.kind : null,
+      revealedColor: wasHidden ? piece.color : null,
+      selfCheck,
       captured: capturedPiece
         ? {
             pieceId: capturedPiece.id,
@@ -340,6 +407,10 @@ export class JieqiGame {
     const legal = this.legalMoves(side);
     if (legal.length === 0) {
       if (this.inCheck(side)) {
+        // Includes 混斗's one way to lose a general outright: a 暗子 that turned out to be the
+        // opponent's left this side checked (rule M4), the opponent simply took the general, and a
+        // general that is no longer on the board counts as attacked (`isKingSafe`) — so the side with
+        // nothing left to play reads as 将死, which is what happened.
         return {
           winner: other(side),
           kind: 'checkmate',

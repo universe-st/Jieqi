@@ -19,7 +19,7 @@ import { Column, Spacer, Stack, Text, render } from '@phaser-mvvm/widgets/compos
 
 import { audioDirector, type AudioDirector } from '../audio/AudioDirector';
 import { drawVerdict, planSpin, type SpinPlan } from '../core/spin';
-import type { Color } from '../core/types';
+import type { Color, GameMode } from '../core/types';
 import { drawCurtain } from '../ui/backdrop';
 import { C, DESIGN_HEIGHT, DESIGN_WIDTH, TITLE_STACK } from '../ui/palette';
 import { applyRenderScale } from '../ui/render-scale';
@@ -29,6 +29,11 @@ import { announceScreen } from './screen';
 
 /** How long the verdict stays on screen before the board takes over. */
 const VERDICT_HOLD_MS = 1700;
+
+/** What the menu hands the draw: the way to play. Defaults to 标准 when a scene is started directly. */
+export interface DrawSceneData {
+  mode?: GameMode;
+}
 
 export class DrawScene extends Phaser.Scene {
   private audio!: AudioDirector;
@@ -44,8 +49,21 @@ export class DrawScene extends Phaser.Scene {
   /** Guards the hand-over, so a late timer cannot start the board twice. */
   private handedOver = false;
 
+  /**
+   * 标准 or 混斗, handed over by the menu and passed straight on to the board.
+   *
+   * The draw decides the colour and nothing else, but it sits between the two screens, so it is where
+   * the value has to be carried — a scene `start`ed without data comes back to 标准 rather than
+   * guessing (which also keeps a direct `scene.start('draw')` from a test meaningful).
+   */
+  private mode: GameMode = 'standard';
+
   constructor() {
     super('draw');
+  }
+
+  init(data: DrawSceneData = {}): void {
+    this.mode = data.mode ?? 'standard';
   }
 
   preload(): void {
@@ -208,7 +226,7 @@ export class DrawScene extends Phaser.Scene {
     this.cameras.main.fadeOut(320, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       // The board opens with whoever drew 红; the scene plays the AI's first move if that is not you.
-      this.scene.start('game', { player: face });
+      this.scene.start('game', { player: face, mode: this.mode });
     });
   }
 
@@ -231,6 +249,11 @@ export class DrawScene extends Phaser.Scene {
   /** The colour the piece is going to land on. Known from the first frame; shown at the end. */
   get outcome(): Color {
     return this.plan.face;
+  }
+
+  /** The way to play this draw is carrying to the board. */
+  get gameMode(): GameMode {
+    return this.mode;
   }
 
   /** How the spin was dressed up, for the acceptance run to compare against the animation. */

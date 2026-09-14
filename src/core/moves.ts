@@ -10,6 +10,12 @@
  *
  * That second consequence is why the search can be an ordinary alpha-beta over sampled worlds: every
  * world shares the same move set and differs only in what things are worth and what a reveal turns up.
+ *
+ * 混斗 strains the second bullet, and the way it is kept is worth naming: ownership goes through
+ * `Board.ownerAt` (rule M2 — a 暗子 belongs to the half it stands on), so move generation stays public;
+ * and the one place a reveal could leak into legality — a piece that turns out to be the opponent's and
+ * checks the side that moved it — is deliberately *not* filtered, because the filter would be reading
+ * the hidden identity out loud. See `isKingSafeAfter` and rule M5.
  */
 
 import {
@@ -60,8 +66,9 @@ const HORSE: readonly (readonly [number, number])[] = [
 function addTarget(board: Board, from: number, x: number, y: number, color: Color, out: Move[]): void {
   if (!onBoard(x, y)) return;
   const to = squareOf(x, y);
-  const occupant = board.at(to);
-  if (occupant && occupant.color === color) return;
+  // Ownership, not `piece.color`: in 混斗 a face-down piece belongs to the half it stands on, so a
+  // 暗子 on my half is mine to capture with *and* mine not to capture (rule M2).
+  if (board.ownerAt(to) === color) return;
   out.push({ from, to });
 }
 
@@ -83,7 +90,9 @@ function addIfEmpty(board: Board, from: number, x: number, y: number, out: Move[
 export function generatePieceMoves(board: Board, from: number, out: Move[]): void {
   const piece = board.at(from);
   if (!piece) return;
-  const color = piece.color;
+  // Whoever owns the square now: in 标准 that is the piece's colour, in 混斗 a face-down piece is
+  // whichever side's half it stands on — and that is the side whose 兵/卒 direction and palace apply.
+  const color = board.ownerAt(from) ?? piece.color;
   const { kind, mode } = movementOf(piece);
   const x = fileOf(from);
   const y = rankOf(from);
@@ -170,7 +179,7 @@ export function generatePieceMoves(board: Board, from: number, out: Move[]): voi
         while (onBoard(tx, ty)) {
           const blocker = board.at(squareOf(tx, ty));
           if (blocker) {
-            if (blocker.color !== color) out.push({ from, to: squareOf(tx, ty) });
+            if (board.ownerAt(squareOf(tx, ty)) !== color) out.push({ from, to: squareOf(tx, ty) });
             break;
           }
           tx += dx;
@@ -192,11 +201,10 @@ export function generatePieceMoves(board: Board, from: number, out: Move[]): voi
   }
 }
 
-/** All pseudo-legal moves for `color`. */
+/** All pseudo-legal moves for `color` — the pieces it owns *now* (rule M2 in 混斗). */
 export function generateMoves(board: Board, color: Color, out: Move[] = []): Move[] {
   for (let sq = 0; sq < board.squares.length; sq++) {
-    const piece = board.at(sq);
-    if (piece && piece.color === color) generatePieceMoves(board, sq, out);
+    if (board.ownerAt(sq) === color) generatePieceMoves(board, sq, out);
   }
   return out;
 }
@@ -215,7 +223,8 @@ export function generateCaptures(board: Board, color: Color, out: Move[] = []): 
  * search calls it for every node: a rook along four rays plus a cannon behind it, the eight horse
  * squares with their legs, the pawn's three possible origins, and the diagonal steppers.
  *
- * A hidden attacker is evaluated with `homeKind` — the same movement rule that governs its moves.
+ * A hidden attacker is evaluated with `homeKind` — the same movement rule that governs its moves. Who
+ * the attacker *is* also goes through `ownerAt`, so a 暗子 on my half counts as mine in 混斗.
  */
 export function isSquareAttacked(board: Board, sq: number, byColor: Color): boolean {
   const x = fileOf(sq);
@@ -229,11 +238,12 @@ export function isSquareAttacked(board: Board, sq: number, byColor: Color): bool
     let screen: Piece | null = null;
 
     while (onBoard(tx, ty)) {
-      const piece = board.at(squareOf(tx, ty));
+      const at = squareOf(tx, ty);
+      const piece = board.at(at);
       if (piece) {
         if (!screen) {
           screen = piece;
-          if (piece.color === byColor) {
+          if (board.ownerAt(at) === byColor) {
             const { kind } = movementOf(piece);
             if (kind === 'R') return true;
             // A king captures onto an adjacent square of its own palace — and nowhere else. The
@@ -242,7 +252,7 @@ export function isSquareAttacked(board: Board, sq: number, byColor: Color): bool
             // the two makes this function stop meaning "something could be captured here".
             if (kind === 'K' && distance === 1 && inPalace(piece.color, sq)) return true;
           }
-        } else if (piece.color === byColor && movementOf(piece).kind === 'C') {
+        } else if (board.ownerAt(at) === byColor && movementOf(piece).kind === 'C') {
           return true;
         } else {
           break; // second blocker: nothing beyond it can reach `sq`
@@ -259,8 +269,10 @@ export function isSquareAttacked(board: Board, sq: number, byColor: Color): bool
     const kx = x + ax;
     const ky = y + ay;
     if (!onBoard(kx, ky)) continue;
-    const knight = board.at(squareOf(kx, ky));
-    if (!knight || knight.color !== byColor || movementOf(knight).kind !== 'H') continue;
+    const knightSquare = squareOf(kx, ky);
+    const knight = board.at(knightSquare);
+    if (!knight || board.ownerAt(knightSquare) !== byColor) continue;
+    if (movementOf(knight).kind !== 'H') continue;
     // Leg for a horse standing at `k` and jumping to `sq`: one step out of `k` along the long axis.
     const legX = Math.abs(ax) === 2 ? x + ax / 2 : x + ax;
     const legY = Math.abs(ay) === 2 ? y + ay / 2 : y + ay;
@@ -271,15 +283,17 @@ export function isSquareAttacked(board: Board, sq: number, byColor: Color): bool
   // --- Pawns. ----------------------------------------------------------------------------------
   const behind = y - forwardStep(byColor);
   if (onBoard(x, behind)) {
-    const pawn = board.at(squareOf(x, behind));
-    if (pawn && pawn.color === byColor && movementOf(pawn).kind === 'P') return true;
+    const pawnSquare = squareOf(x, behind);
+    const pawn = board.at(pawnSquare);
+    if (pawn && board.ownerAt(pawnSquare) === byColor && movementOf(pawn).kind === 'P') return true;
   }
   for (const dx of [-1, 1]) {
     const px = x + dx;
     if (!onBoard(px, y)) continue;
     const pawnSquare = squareOf(px, y);
     const pawn = board.at(pawnSquare);
-    if (!pawn || pawn.color !== byColor || movementOf(pawn).kind !== 'P') continue;
+    if (!pawn || board.ownerAt(pawnSquare) !== byColor) continue;
+    if (movementOf(pawn).kind !== 'P') continue;
     if (crossedRiver(byColor, pawnSquare)) return true;
   }
 
@@ -290,7 +304,7 @@ export function isSquareAttacked(board: Board, sq: number, byColor: Color): bool
     if (!onBoard(px, py)) continue;
     const attackerSquare = squareOf(px, py);
     const advisor = board.at(attackerSquare);
-    if (!advisor || advisor.color !== byColor) continue;
+    if (!advisor || board.ownerAt(attackerSquare) !== byColor) continue;
     const { kind, mode } = movementOf(advisor);
     if (kind !== 'A') continue;
     if (mode === 'classic' && (!inPalace(byColor, attackerSquare) || !inPalace(byColor, sq))) continue;
@@ -304,7 +318,7 @@ export function isSquareAttacked(board: Board, sq: number, byColor: Color): bool
     if (!onBoard(px, py)) continue;
     const attackerSquare = squareOf(px, py);
     const elephant = board.at(attackerSquare);
-    if (!elephant || elephant.color !== byColor) continue;
+    if (!elephant || board.ownerAt(attackerSquare) !== byColor) continue;
     const { kind, mode } = movementOf(elephant);
     if (kind !== 'E') continue;
     if (mode === 'classic' && (!ownHalf(byColor, attackerSquare) || !ownHalf(byColor, sq))) continue;
@@ -346,12 +360,54 @@ export function kingsFaceEachOther(board: Board): boolean {
 /**
  * Is `color`'s king un-attacked right now? This is the single predicate move legality is built on, so
  * it has to cover both ways a king can be taken: an ordinary attack, and the kings facing each other.
+ *
+ * A king that is not on the board at all counts as attacked. 标准 can never produce such a position —
+ * a move that leaves one's own general attacked is filtered out, so nobody can ever take one — but
+ * 混斗 can: a 暗子 that turns out to be the opponent's may hand the opponent a check on the very side
+ * that moved it (rule M4), and the general is then simply taken (rule M5). Treating "no king" as
+ * unsafe is what makes that capture read as the mate it is instead of leaving a piece-less king
+ * wandering the board.
  */
 export function isKingSafe(board: Board, color: Color): boolean {
   const king = board.kingSq[color];
   if (king < 0) return false;
+  const standing = board.at(king);
+  if (!standing || standing.kind !== 'K' || standing.color !== color) return false;
   if (isSquareAttacked(board, king, color === 'red' ? 'black' : 'red')) return false;
   return !kingsFaceEachOther(board);
+}
+
+/**
+ * Would `color`'s general be safe after playing `move` — **judged on what the board shows?**
+ *
+ * This is move legality, and the distinction matters only in 混斗. Making the move turns a 暗子 over,
+ * and turning it over may hand it to the opponent (rule M4) — so the honest engine state after the
+ * move can be a position where the *mover's* own general stands attacked, which 标准 cannot produce.
+ * Legality must not depend on that: what a 暗子 turns out to be is precisely what the player does not
+ * know (rule R4's whole point), and a move list that changed with a hidden identity would leak it.
+ *
+ * So the question asked here is the one the mover can ask: *with this piece still mine, is my general
+ * exposed?* — the ordinary 送将 test, applied to the board as it looks before the piece is turned
+ * over. Playing such a move is allowed (`rules.legalMoves` keeps it), and the consequence lands
+ * afterwards as an ordinary check against the mover, which the opponent may answer with the general.
+ * The AI's *search* deliberately does not use this: inside a determinized world the reveal is known,
+ * so there the real consequence is the right thing to score.
+ */
+export function isKingSafeAfter(board: Board, color: Color, move: Move): boolean {
+  const undo = board.makeMove(move.from, move.to);
+  const moved = board.at(move.to);
+  if (moved && moved.color !== color) {
+    // Pretend the piece is still ours for the length of the check. Nothing reads the Zobrist key in
+    // between, and `unmakeMove` restores the square from the undo record either way.
+    board.squares[move.to] = { ...moved, color };
+    const safe = isKingSafe(board, color);
+    board.squares[move.to] = moved;
+    board.unmakeMove(undo);
+    return safe;
+  }
+  const safe = isKingSafe(board, color);
+  board.unmakeMove(undo);
+  return safe;
 }
 
 export { FILES, RANKS };

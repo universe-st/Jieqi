@@ -14,7 +14,7 @@
 import { computed, ref } from '@phaser-mvvm/core';
 import type { Difficulty } from '../ai';
 import type { GameResult } from '../core/rules';
-import { FIRST_MOVER, COLOR_NAME, other, type Color } from '../core/types';
+import { FIRST_MOVER, COLOR_NAME, MODE_NAME, other, type Color, type GameMode } from '../core/types';
 import type { CapturedChip } from './tray';
 
 export interface MoveLogRow {
@@ -44,6 +44,8 @@ export class GameViewModel {
   /** 0…1 progress through the AI's sampled worlds, for the thinking bar. */
   readonly thinkingProgress = ref(0);
   readonly difficulty = ref<Difficulty>('normal');
+  /** 标准 or 混斗 — chosen at 开始游戏 and fixed for the match. */
+  readonly mode = ref<GameMode>('standard');
   /**
    * 吃子提示 — mark the pieces that can be taken for free (our own in red, the opponent's in green).
    *
@@ -62,6 +64,9 @@ export class GameViewModel {
   readonly busy = ref(false);
 
   readonly difficultyLabel = computed(() => DIFFICULTY_LABEL[this.difficulty.value]);
+  readonly modeLabel = computed(() => MODE_NAME[this.mode.value]);
+  /** Shown beside the title only when it is worth saying — a 标准 board says nothing. */
+  readonly modeBadge = computed(() => (this.mode.value === 'mixed' ? MODE_NAME.mixed : ''));
   readonly turnLabel = computed(() => (this.turn.value === 'red' ? '红方行棋' : '黑方行棋'));
   /** Who the two panels are about. Colour-dependent, because the player's colour is drawn, not fixed. */
   readonly playerName = computed(() => `你 · ${COLOR_NAME[this.player.value]}`);
@@ -73,6 +78,21 @@ export class GameViewModel {
   /** How many pieces each side has taken, for the label beside the tray. */
   readonly playerTrayCount = computed(() => this.playerTray.value.length);
   readonly aiTrayCount = computed(() => this.aiTray.value.length);
+  /**
+   * How each tray's count reads.
+   *
+   * 标准 can name the *side* the chips came from — only the enemy's pieces can be taken, so "吃掉我方"
+   * is exact. 混斗 cannot: a tray there holds whatever that side took, and a red piece may be sitting
+   * in red's own tray. Counting them is the honest thing left to say.
+   */
+  readonly aiTrayLabel = computed(() =>
+    this.mode.value === 'mixed' ? `吃子 ${this.aiTrayCount.value} 枚` : `吃掉我方 ${this.aiTrayCount.value} 子`,
+  );
+  readonly playerTrayLabel = computed(() =>
+    this.mode.value === 'mixed'
+      ? `吃子 ${this.playerTrayCount.value} 枚`
+      : `吃掉敌方 ${this.playerTrayCount.value} 子`,
+  );
   readonly finished = computed(() => this.result.value !== null);
   readonly canUndo = computed(
     () => !this.busy.value && this.moves.value.length > 0 && !this.finished.value,

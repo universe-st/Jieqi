@@ -21,6 +21,12 @@
  * 2. **The pool already encodes what has been learned.** Revealing a piece removes its identity from
  *    the pool; losing one face down removes nothing, leaving an entry that can never be pinned down.
  *
+ * 混斗 keeps both properties and changes only *what a world decides*: there the two armies are dealt as
+ * one pool, so a sample hands each face-down piece a colour as well as a kind (`sampleWorldMixed`).
+ * Legality is still world-independent — a 暗子 moves by its square, and ownership-by-half is public —
+ * so every world shares one root move list, and what differs is the price of turning a piece over:
+ * in some worlds the piece walks over to the opponent as soon as it is revealed (rule M4).
+ *
  * ## Where the randomness comes from
  *
  * Three independent, all-small sources (PLAN §3.4): the sampling spread itself, uniform noise added to
@@ -29,11 +35,11 @@
  */
 
 import type { Board } from '../core/board';
-import { sampleWorld } from '../core/info';
+import { sampleWorld, sampleWorldMixed } from '../core/info';
 import { toChineseNotation } from '../core/notation';
 import type { JieqiGame } from '../core/rules';
 import { createRng, randomSeed, type Rng } from '../core/rng';
-import { type Color, type Kind, type Move, sameMove } from '../core/types';
+import { type Color, type Identity, type Kind, type Move, sameMove } from '../core/types';
 import { Searcher } from './search';
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -214,6 +220,7 @@ function* searchWorlds(plan: SearchPlan): Generator<number, AiDecision, void> {
   const startedAt = Date.now();
   const working: Board = game.board.clone();
   const scratch: Kind[] = [];
+  const mixedScratch: Identity[] = [];
   const searcher = new Searcher({
     maxDepth: settings.depth,
     nodeBudget: settings.nodeBudget,
@@ -230,7 +237,16 @@ function* searchWorlds(plan: SearchPlan): Generator<number, AiDecision, void> {
     // Re-derive a fresh, equally plausible world for every sample, from *this* player's point of
     // view: the pool includes what the opponent has lost face down (still unknown) but excludes the
     // face-down pieces this player has captured and turned over in their hand.
-    sampleWorld(working, game.poolsFor(color), rng, scratch);
+    //
+    // 混斗 samples the same way over **one** pool of thirty identities: a 暗子's identity and its
+    // colour are both unknown, so a world decides whose piece it is as well as what it is. That is
+    // what puts the real cost of moving a 暗子 into the search's average — in some worlds it walks
+    // over to the enemy the moment it is turned over (rule M4).
+    if (game.mode === 'mixed') {
+      sampleWorldMixed(working, game.mixedPoolFor(color), rng, mixedScratch);
+    } else {
+      sampleWorld(working, game.poolsFor(color), rng, scratch);
+    }
     working.side = color;
     working.rehash();
 

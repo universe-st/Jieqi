@@ -24,8 +24,87 @@ import {
 
 import { DIFFICULTY, type Difficulty } from '../ai';
 import type { AudioDirector } from '../audio/AudioDirector';
+import { MODE_NAME, type GameMode } from '../core/types';
 import { DIFFICULTY_LABEL } from '../vm/GameViewModel';
 import { DIFFICULTIES } from '../vm/prefs';
+
+/** The two ways to play, in the order the dialog lists them. */
+export const MODES: readonly GameMode[] = ['standard', 'mixed'];
+
+/**
+ * One line per mode, under its button.
+ *
+ * Written for someone who has played 揭棋 before and has never seen 混斗: the first says what does *not*
+ * change (you only ever turn over your own pieces), the second is the whole rule in one sentence —
+ * whose piece a 暗子 is comes down to which half it stands on, and the coin can land on the opponent's
+ * face.
+ */
+export const MODE_HINT: Readonly<Record<GameMode, string>> = {
+  standard: '双方各执十五枚暗子：翻开的永远是自己人，暗子只知道格位、不知道身份。',
+  mixed: '红黑三十枚棋子混洗后背面朝上：己方半场的暗子暂时归你，翻开若是敌方棋子，该子当场易主。',
+};
+
+/**
+ * 玩法选择 — the dialog 开始游戏 opens.
+ *
+ * It sits on the way in rather than in a settings screen because the mode is not a preference like the
+ * volume: it decides what the deal *is*, so it can only be asked before a board exists. Picking one
+ * starts the match in the same tap (the caller hands over to 定先后), and the choice is remembered for
+ * next time — a player who wants 混斗 wants it every game, and one who does not should never see it
+ * again by accident.
+ */
+export function openModeDialog(
+  plugin: MVVMPlugin,
+  current: GameMode,
+  onPick: (mode: GameMode) => void,
+): void {
+  const chosen = ref<GameMode>(current);
+
+  plugin.modal.open(
+    () => {
+      Panel({ variant: 'surface', radius: 12, padding: 16, width: 316, gap: 10 }, () => {
+        Row({ width: 'fill', alignItems: 'center' }, () => {
+          Text('玩 法', { size: 'lg', name: 'modeTitle' });
+          Spacer({ flex: true });
+          Text('选定后开局', { size: 'xs', tone: 'muted' });
+        });
+        Divider({});
+        Column({ width: 'fill', gap: 10 }, () => {
+          for (const mode of MODES) {
+            Column({ width: 'fill', gap: 3 }, () => {
+              Button(() => `${MODE_NAME[mode]}${chosen.value === mode ? '　✓' : ''}`, {
+                variant: () => (chosen.value === mode ? 'primary' : 'secondary'),
+                size: 'md',
+                width: 'fill',
+                name: `mode_${mode}`,
+                label: MODE_NAME[mode],
+                onClick: () => {
+                  chosen.value = mode;
+                  plugin.modal.closeTop();
+                  onPick(mode);
+                },
+              });
+              Text(MODE_HINT[mode], { size: 'xs', tone: 'muted', wrap: true });
+            });
+          }
+        });
+        Divider({});
+        Row({ width: 'fill', gap: 8, alignItems: 'center' }, () => {
+          Text(() => `上次选择：${MODE_NAME[chosen.value]}`, { size: 'xs', tone: 'muted' });
+          Spacer({ flex: true });
+          Button('取消', {
+            variant: 'ghost',
+            size: 'sm',
+            width: 76,
+            name: 'modeCancel',
+            onClick: () => plugin.modal.closeTop(),
+          });
+        });
+      });
+    },
+    { name: 'mode', scrim: 0.6 },
+  );
+}
 
 /**
  * The mixer.

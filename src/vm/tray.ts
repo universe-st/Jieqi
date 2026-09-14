@@ -20,6 +20,16 @@
  * match is running, the loser's tray keeps its face-down chips face down; once it is over,
  * {@link TrayOptions.revealHidden} turns them all up (dimmed), which is the tray's half of the same
  * endgame reveal the board does with its remaining 暗子.
+ *
+ * ## 混斗
+ *
+ * One thing has to be said differently there: a 混斗 deal can put a red piece on black's half, so red
+ * can capture a piece that was *really red* — and then "the tray of the side that lost it" and "the
+ * tray of the side that took it" are the same tray. What the trays are really about is **who did the
+ * capturing** (the capturer is the one who turned the piece over in their hand, which is the whole of
+ * R7), so {@link mixedTrayChips} keys on the capturer instead of on the captured colour. In 标准 the
+ * two are the same thing — only the enemy's pieces can be taken — which is why the mode is the only
+ * difference between the two functions.
  */
 
 import type { CapturedInfo, MoveEvent } from '../core/rules';
@@ -82,13 +92,54 @@ export function trayChips(
 }
 
 /**
+ * 混斗's trays: the chips of everything **`capturer` took**, whoever those pieces really were.
+ *
+ * 混斗 can hand a capture to a capturer who is also the loser — red walking over a 暗子 on black's
+ * half that turns out to be red's own — so the question "may the viewer look?" is asked about the
+ * capturer rather than about the captured piece's colour. Everything else follows {@link trayChips}:
+ * a piece taken face up is public, a piece taken face down is the capturer's to see and nobody
+ * else's, and the dimming is what says it was taken while still face down.
+ */
+export function mixedTrayChips(
+  events: readonly MoveEvent[],
+  viewer: Color,
+  capturer: Color,
+  options: TrayOptions = {},
+): CapturedChip[] {
+  const viewerIsCapturer = capturer === viewer;
+  const revealed = options.revealHidden === true;
+  const chips: CapturedChip[] = [];
+  let index = 0;
+  for (const event of events) {
+    const captured = event.captured;
+    // `event.color` is who moved — the side that did the capturing.
+    if (!captured || event.color !== capturer) continue;
+    const maySee = !captured.hidden || viewerIsCapturer || revealed;
+    chips.push({
+      key: `c${index++}-${captured.pieceId}`,
+      color: captured.color,
+      kind: maySee ? captured.kind : null,
+      dimmed: captured.hidden && maySee,
+    });
+  }
+  return chips;
+}
+
+/**
  * The one-line capture notice in the move feed, as `viewer` may read it.
  *
  * The same per-observer rule as {@link trayChips}: the kind is named only when the piece was face up
  * in front of everybody, or when the viewer is the capturer who turned it over in their hand. The
  * loser of a face-down piece just reads 吃暗子 (rule R7: 己方暗子被吃后，自己是不能看到暗子是什么棋).
+ *
+ * `capturer` defaults to the only side that can capture in 标准 — the enemy of the piece's colour —
+ * and 混斗 passes the side that actually moved.
  */
-export function captureLabel(captured: CapturedInfo, viewer: Color): string {
-  const maySee = !captured.hidden || other(captured.color) === viewer;
+export function captureLabel(
+  captured: CapturedInfo,
+  viewer: Color,
+  capturer: Color = other(captured.color),
+): string {
+  const maySee = !captured.hidden || capturer === viewer;
   return maySee ? `吃${KIND_NAME[captured.color][captured.kind]}` : '吃暗子';
 }

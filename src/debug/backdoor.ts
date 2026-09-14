@@ -25,7 +25,15 @@ import { stageRectOf, type Widget } from '@phaser-mvvm/phaser';
 import type { Difficulty } from '../ai';
 import { toChineseNotation } from '../core/notation';
 import type { JieqiGame, MoveEvent } from '../core/rules';
-import { type Color, type Kind, KIND_NAME, SQUARES, fileOf, rankOf } from '../core/types';
+import {
+  type Color,
+  type GameMode,
+  type Kind,
+  KIND_NAME,
+  SQUARES,
+  fileOf,
+  rankOf,
+} from '../core/types';
 import { DESIGN_HEIGHT, DESIGN_WIDTH } from '../ui/palette';
 import type { DrawScene } from '../scenes/DrawScene';
 import type { GameScene } from '../scenes/GameScene';
@@ -102,7 +110,13 @@ export interface BackdoorState {
   truth: string[];
   selection: string | null;
   history: string[];
+  /**
+   * What neither side can account for yet: in 标准 the two armies' unknown identities, in 混斗 the
+   * thirty-identity pool split by the colour each unknown piece would turn out to have.
+   */
   pool: { red: number; black: number };
+  /** 标准 or 混斗 — the two deals produce very different boards, so a run has to be able to tell. */
+  mode: GameMode;
   /** The line under the board — how a refusal reads to the player. */
   status: string;
   /** 吃子提示 as the board has it. */
@@ -118,8 +132,15 @@ export interface Backdoor {
   state(): BackdoorState;
   /** Waits for a screen to come up, or gives up after `ms`. */
   waitForScreen(name: ScreenName, ms?: number): Promise<boolean>;
-  /** Presses 开始游戏 and resolves once the board is dealt and idle. */
-  startGame(): Promise<void>;
+  /**
+   * Presses 开始游戏 and resolves once the board is dealt and idle.
+   *
+   * `mode` answers the 玩法 dialog the button opens. Omit it and the dialog is pressed through with
+   * whatever the menu last used, which is what a run that just wants a board should do; pass `'mixed'`
+   * for a 混斗 board. The dialog's own buttons are named (`mode_standard` / `mode_mixed`), so a run that
+   * wants to prove the *question* is asked can click them for real instead.
+   */
+  startGame(mode?: GameMode): Promise<void>;
   /** Presses 新局: back through 定先后, which decides the colour again. */
   redraw(): Promise<void>;
   /** The draw as it stands, or `null` when that screen is not up. */
@@ -342,7 +363,7 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
   };
 
   const api: Backdoor = {
-    version: '1.3.2',
+    version: '1.4.0',
 
     screen,
 
@@ -369,6 +390,8 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
           selection: null,
           history: [],
           pool: { red: 15, black: 15 },
+          // Off the board, the mode is whatever the menu is about to deal, or 标准 when nothing is up.
+          mode: startScene()?.selectedMode ?? drawScene()?.gameMode ?? 'standard',
           status: '',
           captureHint: api.captureHint(),
           errors: errors.length,
@@ -393,9 +416,17 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
         selection: s.selection === null ? null : label(s.selection),
         history: engine.moveEvents.map((event: MoveEvent) => event.notation),
         pool: (() => {
+          if (engine.mode === 'mixed') {
+            const pool = engine.mixedPoolFor('red');
+            return {
+              red: pool.filter((entry) => entry.color === 'red').length,
+              black: pool.filter((entry) => entry.color === 'black').length,
+            };
+          }
           const pools = engine.poolsFor('red');
           return { red: pools.red.length, black: pools.black.length };
         })(),
+        mode: engine.mode,
         status: s.vm.status.value,
         captureHint: s.captureHint,
         errors: errors.length,
@@ -421,13 +452,23 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
      * harness that wants a board right now needs; the button's own 新局 → 重新定先后 path is
      * {@link redraw}, and the two are deliberately different calls so neither is a surprise.
      */
-    async startGame() {
+    async startGame(mode?: GameMode) {
       if (screen() === 'game') {
+        const board = scene();
+        // Already on a board: a fresh deal keeps the mode the board is being played in — and if the
+        // caller asked for the *other* one, say so instead of quietly dealing the same game again.
+        if (mode && mode !== board.gameMode) {
+          throw new Error(
+            `__JIEQI__: this board is ${board.gameMode}; call backToMenu() before startGame('${mode}')`,
+          );
+        }
         await api.newGame();
         return;
       }
       const menu = startScene();
-      if (menu) menu.beginGame();
+      // `beginGame(mode)` answers the 玩法 dialog on the caller's behalf; without a mode it opens it,
+      // and the call would then have to press a button — which is the run's business, not this one's.
+      if (menu) menu.beginGame(mode ?? menu.selectedMode);
       const reached = await api.waitForScreen('game', 20000);
       if (!reached) throw new Error(`__JIEQI__: startGame() never reached the board (screen = "${screen()}")`);
       await api.settle();
