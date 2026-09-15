@@ -1095,4 +1095,23 @@ JIEQI_VERSION_CODE=23 ./build-android-release.sh
 
 下一版 versionCode 从 **24** 起。
 
+### 14.7 签名 release 包（1.6.0）— 一骑讨 + 仅剩将帅判和 + 「？」玩法介绍
+
+```
+JIEQI_VERSION_CODE=24 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.6.0-release.apk`，**17,881,367 B** |
+| badging | `com.jieqi.game`、versionName **1.6.0**、versionCode **24**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（同一把密钥） |
+| 改动 | ① **一骑讨**（用户拍板，取代旧无风险飞将）：迷雾里视野中有对方将帅 + 双方将帅同竖线 + 中间无可见棋子阻挡时，可选己方将帅点对方将帅——横幅「一骑讨！」→ 连线视野全部亮出 → 己方将帅金色光晕加速冲锋；线上确实无子则直取敌帅获胜，藏着暗子则将帅阵亡判负。规则：`Board.makeMove` 检测「将飞将」按真盘查线（`DuelInfo` won/line/blocker），搜索逐采样世界生效（连线被采样暗子占住 = -MATE，AI 自己权衡赌）；`kingsFaceEachOtherFog` 保留为受检方将军判据。② **双方仅剩将帅判和**（用户拍板）：`computeResult` fog 分支加 `onlyKingsLeft` →「双方仅剩将帅，判和」。③ **「？」玩法介绍按钮**（所有玩法，菜单按钮左边）：`openModeHelpDialog` 弹当前玩法完整规则（MODE_RULES 可滚动）。④ 验收后门新增 `setPosition`（ASCII 图摆局，确定性构造特定局面） |
+| 门禁 | typecheck 0 错；`pnpm test` **129/129**（新增 8 例：canDuelFog 可见/阻挡/迷雾赌局、apply 胜/负 duel、undo、fogCandidates、仅剩将帅判和与王+兵不判和） |
+| 浏览器实测 | Playwright headless：①「？」按钮在菜单左边（x 907.9 < 942.4），点击弹「玩法介绍 · 迷雾玩法」弹窗（helpTitle/helpScroll/helpClose 均在）；② setPosition 构造胜局（红帥(4,9) 对 黑將(4,4) + 三红車照亮线）→ move 实走 → 视频帧 385 命中横幅「一骑讨！」+ 连线亮出，帧 390/395 红帥金光辉冲中腹，结算「黑方将帅被吃，红方胜」，棋谱「帅五进五」；③ 败局（红帥(4,9) 对 黑將(4,5) + 雾中黑車(4,6) 挡线）→ 横幅「一骑讨！」+ 连线亮出见黑車，结算「红方将帅被吃，黑方胜」；`errors()` 全程 0 |
+| 包内核对 | `assets/www/assets/index-8_ygynIa.js`：一骑讨×1、双方仅剩将帅×1、1.6.0×10；旧词「飞将吃将」残留 **0** |
+| 坚果云 | 已上传 `揭棋_20260915_v10.apk`（17,881,367 B，揭棋文件夹，PROPFIND `getcontentlength` 与本地字节数一致） |
+
+下一版 versionCode 从 **25** 起。
+
 

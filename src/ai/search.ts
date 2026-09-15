@@ -190,11 +190,17 @@ export class Searcher {
     for (const index of order) {
       if (this.aborted) break;
       const move = moves[index] as Move;
-      const victim = board.at(move.to);
       const undo = board.makeMove(move.from, move.to);
-      // 迷雾 吃王棋: a root move that takes the general wins on the spot — the game ends at the
-      // first capture, so there is no retaliation to search.
-      if (victim && victim.kind === 'K') {
+      // 迷雾 吃王棋: a move that takes the general wins on the spot — the game ends at the first
+      // capture, so there is no retaliation to search. A 一骑讨 (rule F6) can also end with the
+      // *mover's* own general dead on a hidden blocker — score that as the immediate loss it is.
+      if (board.kingSq[color] < 0) {
+        board.unmakeMove(undo);
+        scores[index] = -MATE;
+        if (-MATE > alpha) alpha = -MATE;
+        continue;
+      }
+      if (board.kingSq[other(color)] < 0) {
         board.unmakeMove(undo);
         scores[index] = MATE;
         if (MATE > alpha) alpha = MATE;
@@ -277,7 +283,13 @@ export class Searcher {
       const undo = board.makeMove(move.from, move.to);
       // 迷雾 吃王棋: taking the general ends the game right there — score it as the win it is,
       // before any retaliation can be searched (the enemy general never gets to capture back).
-      if (victim && victim.kind === 'K') {
+      // A 一骑讨 (rule F6) can instead kill the mover's own general on a hidden blocker — the loss.
+      if (board.kingSq[color] < 0) {
+        board.unmakeMove(undo);
+        this.path.pop();
+        return -MATE + ply;
+      }
+      if (board.kingSq[other(color)] < 0) {
         board.unmakeMove(undo);
         this.path.pop();
         return MATE - ply;
@@ -341,12 +353,19 @@ export class Searcher {
     scratch.sort((a, b) => captureScore(board, b) - captureScore(board, a));
 
     for (const move of scratch) {
-      const victim = board.at(move.to);
+      const undo = board.makeMove(move.from, move.to);
+      // 迷雾 一骑讨 (rule F6): the capture target is the enemy king, but the duel may kill the
+      // capturer instead — check whose general left the board before scoring the terminal.
+      if (board.kingSq[color] < 0) {
+        board.unmakeMove(undo);
+        return -MATE + ply + 1;
+      }
       // The opponent's king cannot legally be captured in a search that filters at every node, so this
       // only fires when a shallow line let one through: treat it as the mate it is.
-      if (victim && victim.kind === 'K') return MATE - ply - 1;
-
-      const undo = board.makeMove(move.from, move.to);
+      if (board.kingSq[other(color)] < 0) {
+        board.unmakeMove(undo);
+        return MATE - ply - 1;
+      }
       // 迷雾 吃王棋: the capture may leave the capturer's own general exposed — that is legal now,
       // and losing the general next move is the price the search has to see, not a filter to skip.
       if (!board.fog && !isKingSafe(board, color)) {

@@ -9,8 +9,8 @@
  * - the **cannon** sees the empty squares along its four rays *and* the first piece beyond a screen —
  *   it captures over a piece, so it can see the thing on the far side (rule V2's own example) — but
  *   not the screen itself;
- * - the **king**, in 迷雾 mode, sees the enemy king along a clear, *visible* file, because the flying
- *   general lets it take it (rule F2).
+ * - the **king**, in 迷雾 mode, sees the enemy king along a clear, *visible* file, because the
+ *   一骑讨 lets it fly at it (rule F6, formerly F2).
  *
  * A face-down piece sees with the vision of the square it stands on (rule V3) — `movementOf()` is the
  * shared source of truth for "how does this piece move right now", and vision mirrors it exactly. Once
@@ -116,9 +116,10 @@ function computeVisionInto(board: Board, color: Color, out: Uint8Array): void {
     if (!piece) continue;
     addPieceVision(board, sq, piece, out);
   }
-  // Rule F2: a king that faces the enemy king along a clear, *visible* file can take it, so the enemy
-  // king's square is part of the king's vision. Evaluated against the base `out` only, so it adds the
-  // one square the facing condition earns and never feeds back into itself.
+  // Rule F6 (一骑讨): a king that faces the enemy king along a clear, *visible* file can fly at it,
+  // so the enemy king's square is part of the king's vision. Evaluated against the base `out` only,
+  // so it adds the one square the facing condition earns and never feeds back into itself. This is
+  // also what makes the *guaranteed* duel (the old F2 flying general) possible — see `canDuelFog`.
   if (board.fog) {
     const king = board.kingSq[color];
     const foe = board.kingSq[other(color)];

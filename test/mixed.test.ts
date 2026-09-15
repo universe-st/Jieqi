@@ -595,6 +595,7 @@ describe('混斗 trays', () => {
       selfCheck: false,
       captured: { square: 1, ...captured },
       gaveCheck: false,
+      duel: null,
       notation: 'test',
     };
   }

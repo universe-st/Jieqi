@@ -248,6 +248,71 @@ export class PieceView extends Phaser.GameObjects.Container {
     });
   }
 
+  /**
+   * The 一骑讨 charge: the king darts at the enemy king with a golden aura around it.
+   *
+   * Flat and accelerating (`Cubic.easeIn`, no arc) so it reads as a lunge rather than a polite glide,
+   * with a soft gold glow that fades out when the charge lands. `fadeIn` is for a king charging out
+   * of the mist — it starts invisible and burns in over the journey.
+   */
+  chargeTo(x: number, y: number, options: { fadeIn?: boolean } = {}): Promise<void> {
+    const fadeIn = options.fadeIn ?? false;
+    if (fadeIn) this.setAlpha(0).setVisible(true);
+    const distance = Phaser.Math.Distance.Between(this.x, this.y, x, y);
+    const duration = Phaser.Math.Clamp(distance * 1.7, 170, 380);
+    // The aura rides inside the container, so it travels with the piece and dies with it.
+    const aura = this.scene.add
+      .image(0, 0, TEX.glow)
+      .setOrigin(0.5)
+      .setDisplaySize(PIECE_RADIUS * 3.1, PIECE_RADIUS * 3.1)
+      .setTint(C.goldBright)
+      .setAlpha(0);
+    this.addAt(aura, 1);
+    this.scene.tweens.add({
+      targets: aura,
+      alpha: 0.9,
+      scale: 1.3,
+      duration: 200,
+      ease: 'Quad.easeOut',
+    });
+    return new Promise((resolve) => {
+      this.scene.tweens.add({
+        targets: this,
+        x,
+        y,
+        duration,
+        ease: 'Cubic.easeIn',
+        onComplete: () => {
+          if (aura.active) {
+            this.scene.tweens.add({
+              targets: aura,
+              alpha: 0,
+              scale: 1.6,
+              duration: 200,
+              ease: 'Quad.easeIn',
+              onComplete: () => aura.destroy(),
+            });
+          }
+          this.disc.setY(0);
+          this.shadow.setAlpha(0.34).setScale(1, 1);
+          resolve();
+        },
+      });
+      if (fadeIn) {
+        this.scene.tweens.add({ targets: this, alpha: 1, duration, ease: 'Quad.easeIn' });
+      }
+      // The shadow shrinks under the speeding piece; the disc stays flat — a lunge, not a hop.
+      this.scene.tweens.add({
+        targets: this.shadow,
+        alpha: 0.16,
+        scaleX: 0.78,
+        scaleY: 0.78,
+        duration: duration / 2,
+        yoyo: true,
+      });
+    });
+  }
+
   /** Flies in from off-board during the deal. */
   dropIn(x: number, y: number, delay: number, fromY: number): Promise<void> {
     this.setPosition(x, fromY);

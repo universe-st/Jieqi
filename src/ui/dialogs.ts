@@ -17,6 +17,7 @@ import {
   Divider,
   Panel,
   Row,
+  Scroll,
   Slider,
   Spacer,
   Text,
@@ -45,6 +46,81 @@ export const MODE_HINT: Readonly<Record<GameMode, string>> = {
   mixed: '红黑三十枚棋子混洗后背面朝上：己方半场的暗子暂时归你，翻开若是敌方棋子，该子当场易主。',
   fog: '标准玩法 + 视野：只能看到己方棋子能看见的格子，其余被迷雾覆盖；迷雾挡住将帅碰头。',
 };
+
+/**
+ * 玩法介绍 (the board's ？ button) — each mode's full rules, one line per rule.
+ *
+ * Written as the mode itself would explain them: what the deal looks like, how a 暗子 behaves, how
+ * the game is won, and the one or two rules that are specific to the mode. The 迷雾 text carries the
+ * 一骑讨 and the 仅剩将帅判和 rules (both user-定稿, 2026-09-15) because those are the two things a
+ * fog player must know that the fog itself will not tell them.
+ */
+export const MODE_RULES: Readonly<Record<GameMode, readonly string[]>> = {
+  standard: [
+    '开局：双方十六枚棋子按象棋摆好，将帅明面，其余十五枚各自打乱、背面朝上摆在自己半场。',
+    '暗子按所在格的棋走：落子时翻开，翻开的永远是自己人。',
+    '暗子被吃时背面朝上离盘——只有吃子方看到它是什么，被吃方永远不知道自己的暗子是什么。',
+    '翻开的子按真身走法；翻开的仕相可以出九宫、过河。',
+    '送将会让己方将帅暴露在攻击之下，属非法着法，不能走。',
+    '将死、困毙均判负；同一局面第三次重现被禁止（禁止循环追棋，被将军时豁免）。',
+    '久无吃子判和；认输判负。',
+  ],
+  mixed: [
+    '开局：红黑三十枚非将帅棋子混洗成一副，背面朝上摆满双方半场；将帅仍明面。',
+    '暗子归所在半场所有：你半场的暗子暂时归你，可以走、可以吃。',
+    '暗子落子时翻开：是自己的棋就继续用；若是敌方棋子，当场易主变成对方的子。',
+    '翻开的仕相可以出九宫、过河。',
+    '禁止立即吃将：对方刚翻出的子，这一手不能直接吃将。',
+    '送将非法、将死困毙判负、禁止循环追棋、久无吃子判和——同标准玩法。',
+  ],
+  fog: [
+    '标准玩法 + 迷雾：你只能看到己方棋子看得见的地方——棋子自身、周围八格、一步能走到之处。',
+    '看不见的棋子不会画出来；被迷雾盖住的格子是你的盲区。',
+    '迷雾 = 吃王棋：只有吃掉对方将帅才赢。送将合法，将死、困毙不判负。',
+    '将军提示只在你看得见将军的棋时出现。',
+    '一骑讨：视野里有对方将帅、且双方将帅同在一条竖线、中间没有看得见的棋子阻挡时，选中己方将帅、点击对方将帅发起对决——连线亮出后，线上确实无子则直取敌帅获胜；线上藏着暗子则己方将帅阵亡判负。',
+    '双方仅剩将帅时判和；久无吃子判和。',
+    '电脑同样受迷雾限制，会按「上次看见」的位置追踪你的将帅。',
+  ],
+};
+
+/**
+ * 玩法介绍 — the ？ button's dialog: the current mode's full rules in a scrollable panel.
+ *
+ * One dialog for all three modes, showing whichever the match was dealt as: the board already knows
+ * what the player is playing, and asking again would be a control nobody needs.
+ */
+export function openModeHelpDialog(plugin: MVVMPlugin, mode: GameMode): void {
+  plugin.modal.open(
+    () => {
+      Panel({ variant: 'surface', radius: 12, padding: 16, width: 316, gap: 10 }, () => {
+        Row({ width: 'fill', alignItems: 'center' }, () => {
+          Text(`玩法介绍 · ${MODE_NAME[mode]}`, { size: 'lg', name: 'helpTitle' });
+          Spacer({ flex: true });
+        });
+        Divider({});
+        Scroll({ direction: 'vertical', width: 'fill', height: 400, name: 'helpScroll' }, () => {
+          Column({ width: 'fill', gap: 6, padding: { right: 4 } }, () => {
+            for (const line of MODE_RULES[mode]) {
+              Text(line, { size: 'xs', tone: 'muted', wrap: true });
+            }
+          });
+        });
+        Divider({});
+        Row({ width: 'fill', justifyContent: 'end' }, () => {
+          Button('关闭', {
+            variant: 'primary',
+            size: 'sm',
+            width: 76,
+            name: 'helpClose',
+            onClick: () => plugin.modal.closeTop(),
+          });
+        });
+      });
+    },
+    { name: 'help', scrim: 0.6 },
+  );
+}
 
 /**
  * 玩法选择 — the dialog 开始游戏 opens.

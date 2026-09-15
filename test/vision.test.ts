@@ -10,7 +10,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { fogCandidates, chooseMove } from '../src/ai/engine';
-import { generateMoves, isKingSafe, isKingSafeAfter, kingsFaceEachOtherFog } from '../src/core/moves';
+import {
+  canDuelFog,
+  generateMoves,
+  isKingSafe,
+  isKingSafeAfter,
+  kingsFaceEachOtherFog,
+} from '../src/core/moves';
 import { JieqiGame } from '../src/core/rules';
 import { foggedBoardFor, isSquareSeen, resetVisionCache, visibleSquares } from '../src/core/vision';
 import type { Board } from '../src/core/board';
@@ -39,6 +45,16 @@ const QUIET = `
   . . . . . . . . .
   . . . . K . . . .
 `;
+
+/**
+ * A fog game whose board has been overwritten with a hand-built position. The game object keeps the
+ * deal's fog flag, side and repetition map; the position itself is whatever the test wants.
+ */
+function fogGameWith(seed: number): JieqiGame {
+  const game = JieqiGame.create({ mode: 'fog', seed });
+  for (let sq = 0; sq < SQUARES; sq++) game.board.squares[sq] = null;
+  return game;
+}
 
 describe('视野 (vision)', () => {
   beforeEach(() => {
@@ -171,7 +187,7 @@ describe('视野 (vision)', () => {
   });
 });
 
-describe('将帅碰头 in fog (F1/F2)', () => {
+describe('将帅碰头 in fog (F1) — the check half, and 一骑讨 (F6) — the attacker\'s option', () => {
   beforeEach(() => {
     resetVisionCache();
   });
@@ -190,6 +206,7 @@ describe('将帅碰头 in fog (F1/F2)', () => {
     // keeps the line invisible, so no flying general exists and neither king is in check from it.
     expect(kingsFaceEachOtherFog(board, 'red')).toBe(false);
     expect(kingsFaceEachOtherFog(board, 'black')).toBe(false);
+    expect(canDuelFog(board, 'red')).toBe(false);
     expect(isKingSafe(board, 'red')).toBe(true);
     expect(isKingSafe(board, 'black')).toBe(true);
   });
@@ -202,14 +219,17 @@ describe('将帅碰头 in fog (F1/F2)', () => {
     put(board, 'red', 'R', 5, 6);
     finalize(board);
     expect(kingsFaceEachOtherFog(board, 'red')).toBe(true);
+    // The same line opens the 一骑讨 to the attacker: the enemy king is in red's vision.
+    expect(canDuelFog(board, 'red')).toBe(true);
     // Black's king sees only its own doorstep of the line — the fog holds the rest — so black does
-    // not face anything it can answer.
+    // not face anything it can answer, and cannot duel a king it cannot see.
     expect(kingsFaceEachOtherFog(board, 'black')).toBe(false);
+    expect(canDuelFog(board, 'black')).toBe(false);
     expect(isKingSafe(board, 'red')).toBe(false);
     expect(isKingSafe(board, 'black')).toBe(true);
   });
 
-  it('the king gains a flying capture of the enemy king along a visible, clear file', () => {
+  it('the king gains the duel against the enemy king along a visible, clear file (rule F6)', () => {
     const board = facingBoard(9, 4);
     put(board, 'red', 'R', 5, 7);
     put(board, 'red', 'R', 5, 6);
@@ -220,7 +240,7 @@ describe('将帅碰头 in fog (F1/F2)', () => {
     expect(moves.some((m) => m.from === sq('4,9') && m.to === sq('4,4'))).toBe(true);
   });
 
-  it('taking the enemy king by the flying capture removes it from the board (rule F2 victory)', () => {
+  it('a won duel removes the enemy king from the board (rule F6 victory)', () => {
     const board = facingBoard(9, 4);
     put(board, 'red', 'R', 5, 7);
     put(board, 'red', 'R', 5, 6);
@@ -262,20 +282,152 @@ describe('将帅碰头 in fog (F1/F2)', () => {
   });
 });
 
-describe('迷雾 = 吃王棋 (rule F4, 2026-09-15)', () => {
+describe('一骑讨 (rule F6, 2026-09-15) — the risky flying general', () => {
   beforeEach(() => {
     resetVisionCache();
   });
 
-  /**
-   * A fog game whose board has been overwritten with a hand-built position. The game object keeps the
-   * deal's fog flag, side and repetition map; the position itself is whatever the test wants.
-   */
-  function fogGameWith(seed: number): JieqiGame {
-    const game = JieqiGame.create({ mode: 'fog', seed });
-    for (let sq = 0; sq < SQUARES; sq++) game.board.squares[sq] = null;
-    return game;
+  function duelBoard(redY: number, blackY: number): Board {
+    const board = emptyBoard('red');
+    board.fog = true;
+    put(board, 'red', 'K', 4, redY);
+    put(board, 'black', 'K', 4, blackY);
+    return finalize(board);
   }
+
+  it('a visible piece on the file blocks the attempt', () => {
+    const board = duelBoard(9, 5);
+    // The rook on the rank sees the black king at (4,5) along its ray; the hidden black piece at
+    // (4,6) is made visible by the rook at (3,6) — a *visible* blocker, so no duel is offered.
+    put(board, 'red', 'R', 0, 5);
+    putHidden(board, 'black', 'P', 'R', 4, 6);
+    put(board, 'red', 'R', 3, 6);
+    finalize(board);
+    expect(canDuelFog(board, 'red')).toBe(false);
+    expect(generateMoves(board, 'red', []).some((m) => m.from === sq('4,9') && m.to === sq('4,5'))).toBe(false);
+  });
+
+  it('a hidden piece on the file is the gamble — the attempt is offered, the true line decides', () => {
+    const board = duelBoard(9, 5);
+    // The rook at (0,5) sees the black king at (4,5) along its rank ray. The hidden black piece at
+    // (4,6) stands on the file but in fog — no red vision touches it — so red may attempt the duel
+    // and must gamble on whether the file is really clear.
+    put(board, 'red', 'R', 0, 5);
+    putHidden(board, 'black', 'P', 'R', 4, 6);
+    finalize(board);
+    expect(canDuelFog(board, 'red')).toBe(true);
+    const moves = generateMoves(board, 'red', []);
+    expect(moves.some((m) => m.from === sq('4,9') && m.to === sq('4,5'))).toBe(true);
+    // Resolution against the truth: the hidden piece is there, so the charging red king dies on it;
+    // the enemy king never moved.
+    board.makeMove(sq('4,9'), sq('4,5'));
+    expect(board.kingSq.red).toBe(-1);
+    expect(board.kingSq.black).toBe(sq('4,5'));
+    expect(board.at(sq('4,6'))).not.toBeNull();
+  });
+
+  it('apply() reports a won duel: enemy king captured, game over, red wins', () => {
+    const game = fogGameWith(13);
+    const board = game.board;
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 4);
+    put(board, 'red', 'R', 5, 7);
+    put(board, 'red', 'R', 5, 6);
+    put(board, 'red', 'R', 5, 5);
+    finalize(board);
+    const duel = mv(sq('4,9'), sq('4,4'));
+    expect(game.isSelectable(duel)).toBe(true);
+    const event = game.apply(duel);
+    expect(event.duel).not.toBeNull();
+    expect(event.duel?.won).toBe(true);
+    expect(event.duel?.line).toEqual([sq('4,5'), sq('4,6'), sq('4,7'), sq('4,8')]);
+    expect(event.duel?.blocker).toBeNull();
+    expect(event.captured?.kind).toBe('K');
+    expect(game.board.kingSq.black).toBe(-1);
+    expect(game.result?.winner).toBe('red');
+  });
+
+  it('apply() reports a lost duel: charging king dies on the hidden blocker, black wins', () => {
+    const game = fogGameWith(14);
+    const board = game.board;
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 5);
+    put(board, 'red', 'R', 0, 5);
+    putHidden(board, 'black', 'P', 'R', 4, 6);
+    finalize(board);
+    const duel = mv(sq('4,9'), sq('4,5'));
+    expect(game.isSelectable(duel)).toBe(true);
+    const event = game.apply(duel);
+    expect(event.duel).not.toBeNull();
+    expect(event.duel?.won).toBe(false);
+    expect(event.duel?.blocker).toBe(sq('4,6'));
+    expect(event.captured).toBeNull();
+    expect(game.board.kingSq.red).toBe(-1);
+    expect(game.board.kingSq.black).toBe(sq('4,5'));
+    expect(game.result?.winner).toBe('black');
+    expect(game.result?.text).toContain('被吃');
+  });
+
+  it('undo restores a lost duel completely', () => {
+    const game = fogGameWith(15);
+    const board = game.board;
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 5);
+    put(board, 'red', 'R', 0, 5);
+    putHidden(board, 'black', 'P', 'R', 4, 6);
+    finalize(board);
+    game.apply(mv(sq('4,9'), sq('4,5')));
+    expect(game.board.kingSq.red).toBe(-1);
+    game.undo();
+    expect(game.board.kingSq.red).toBe(sq('4,9'));
+    expect(game.board.kingSq.black).toBe(sq('4,5'));
+    expect(game.board.at(sq('4,6'))).not.toBeNull();
+    expect(game.result).toBeNull();
+    expect(game.history.length).toBe(0);
+  });
+
+  it('fogCandidates offers the AI the duel when its view shows the enemy king clear', () => {
+    const game = fogGameWith(16);
+    const board = game.board;
+    // The AI (red) sees the black king at (4,5) along the rank; the file to it is clear in its view.
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 5);
+    put(board, 'red', 'R', 0, 5);
+    finalize(board);
+    game.kingSeen.red = sq('4,5');
+    const candidates = fogCandidates(game, 'red');
+    expect(candidates.some((m) => m.from === sq('4,9') && m.to === sq('4,5'))).toBe(true);
+  });
+
+  it('双方仅剩将帅判和 (2026-09-15)', () => {
+    const game = fogGameWith(17);
+    const board = game.board;
+    for (let s = 0; s < SQUARES; s++) board.squares[s] = null;
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 0);
+    finalize(board);
+    const result = game.computeResult();
+    expect(result).not.toBeNull();
+    expect(result?.winner).toBeNull();
+    expect(result?.text).toContain('仅剩将帅');
+  });
+
+  it('a king plus one soldier is not a draw yet — only bare kings are', () => {
+    const game = fogGameWith(18);
+    const board = game.board;
+    for (let s = 0; s < SQUARES; s++) board.squares[s] = null;
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 0);
+    put(board, 'black', 'P', 1, 1);
+    finalize(board);
+    expect(game.computeResult()).toBeNull();
+  });
+});
+
+describe('迷雾 = 吃王棋 (rule F4, 2026-09-15)', () => {
+  beforeEach(() => {
+    resetVisionCache();
+  });
 
   it('送将 is legal: a move that leaves the general exposed is playable in fog', () => {
     const game = fogGameWith(5);

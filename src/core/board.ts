@@ -15,7 +15,9 @@ import {
   type Identity,
   type Kind,
   type Piece,
+  fileOf,
   other,
+  rankOf,
   sideOfSquare,
   squareOf,
 } from './types';
@@ -105,9 +107,10 @@ export class Board {
   mixed = false;
 
   /**
-   * 迷雾 mode (rules V1–V3, F2): while this is set, the board's rules treat 将帅碰头 as only real
-   * along a file every square of which the checked side can *see* (`kingsFaceEachOtherFog`), and the
-   * king gains the flying capture of an enemy king it faces along such a file.
+   * 迷雾 mode (rules V1–V3, F6): while this is set, the board's rules treat 将帅碰头 as only real
+   * along a file every square of which the checked side can *see* (`kingsFaceEachOtherFog`), and
+   * the king gains the risky 一骑讨 duel — it may fly at an enemy king that is visible to it along
+   * a file with no visible blocker, and the true line decides who falls (`makeMove` resolves it).
    *
    * Vision itself (`visibleSquares`) does not read this flag — a player's view is the union of their
    * pieces' visions, which is a pure function of the position in every mode — but the *rules* that
@@ -290,6 +293,24 @@ export class Board {
     // movement from that moment on.
     const next: Piece = moved.hidden ? { ...moved, hidden: false } : moved;
 
+    // 迷雾 一骑讨 (rule F6): a king that flies at the enemy king duels it. The attempt is only ever
+    // generated when the file between the kings shows no *visible* blocker, but hidden pieces may
+    // still stand there — so the outcome is decided by the true line: clear → the enemy king falls
+    // (fall through to the ordinary capture below); any piece → the charging king dies on the
+    // blocker and the enemy king never moves (early return that removes only the mover).
+    if (this.fog && moved.kind === 'K' && captured !== null && captured.kind === 'K') {
+      if (firstBlockerOnFile(this, from, to) !== null) {
+        this.h1 ^= Z.z1[from * CODE_COUNT + codeOf(moved)] as number;
+        this.h2 ^= Z.z2[from * CODE_COUNT + codeOf(moved)] as number;
+        this.squares[from] = null;
+        this.kingSq[moved.color] = -1;
+        this.side = other(this.side);
+        this.h1 ^= Z.side1;
+        this.h2 ^= Z.side2;
+        return undo;
+      }
+    }
+
     this.squares[from] = null;
     this.squares[to] = next;
     this.h1 ^= Z.z1[to * CODE_COUNT + codeOf(next)] as number;
@@ -392,6 +413,26 @@ export class Board {
     }
     return rows.join('\n');
   }
+}
+
+/**
+ * The first piece standing on the file strictly between `from` and `to`, scanning outward from
+ * `from` — the square a charging piece would collide with. `null` when the line is clear.
+ *
+ * Reads whatever the board really holds: a hidden piece blocks a 一骑讨 charge just as surely as a
+ * visible one — that is the whole gamble of the duel.
+ */
+export function firstBlockerOnFile(board: Board, from: number, to: number): number | null {
+  const x = fileOf(from);
+  if (x !== fileOf(to)) return null;
+  const fromRank = rankOf(from);
+  const toRank = rankOf(to);
+  const step = fromRank < toRank ? 1 : -1;
+  for (let y = fromRank + step; y !== toRank; y += step) {
+    const sq = squareOf(x, y);
+    if (board.at(sq)) return sq;
+  }
+  return null;
 }
 
 /** The fifteen identities a side shuffles onto its fifteen non-king starting squares. */

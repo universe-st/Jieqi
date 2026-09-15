@@ -11,7 +11,7 @@
  * a mismatch with `color` is the hand-over everybody just watched.
  */
 
-import { Board, type Undo } from './board';
+import { Board, firstBlockerOnFile, type Undo } from './board';
 import {
   cloneKnowledge,
   createKnowledge,
@@ -29,14 +29,18 @@ import { isSquareSeen } from './vision';
 import {
   ARMY_LIST,
   KING_SQUARE,
+  SQUARES,
   type Color,
   type GameMode,
   type Identity,
   type Kind,
   type Move,
+  fileOf,
   mixedArmy,
   other,
+  rankOf,
   sameMove,
+  squareOf,
 } from './types';
 
 export type ResultKind =
@@ -72,6 +76,20 @@ export interface CapturedInfo {
   kind: Kind;
 }
 
+/**
+ * 迷雾 一骑讨 (rule F6) — the outcome of a king flying at the enemy king.
+ *
+ * `won` says who fell: the charging king took the enemy general (true), or died on a hidden blocker
+ * on the way (false). Either way the game ends. `line` is the file between the two kings — the
+ * squares the duel reveals to the player — and `blocker` is the first piece the charging king hit,
+ * or `null` on a clear run (the view aims the charge animation there).
+ */
+export interface DuelInfo {
+  readonly won: boolean;
+  readonly line: readonly number[];
+  readonly blocker: number | null;
+}
+
 export interface MoveEvent {
   readonly move: Move;
   readonly color: Color;
@@ -100,6 +118,12 @@ export interface MoveEvent {
   readonly captured: CapturedInfo | null;
   /** Did this move put the opponent in check? Drives the 将军 animation. */
   readonly gaveCheck: boolean;
+  /**
+   * 迷雾 一骑讨 (rule F6): set when this move was a king flying at the enemy king. The duel's
+   * animation (banner + reveal + charge) is a different show from an ordinary move, and the outcome
+   * — won or lost — is what the board has to act on.
+   */
+  readonly duel: DuelInfo | null;
   readonly notation: string;
 }
 
@@ -379,6 +403,10 @@ export class JieqiGame {
     const resultBefore = this.result;
     const halfMoveClockBefore = this.halfMoveClock;
     const lastMoveBefore = this.lastMove;
+    // 迷雾 一骑讨 (rule F6): the move is a duel exactly when a king flies at the enemy king — the
+    // only way a king can ever point at the enemy king's square. The outcome is decided inside
+    // `board.makeMove` against the true line (clear → win, hidden blocker → the charging king dies).
+    const isDuel = board.fog && piece.kind === 'K' && capturedPiece?.kind === 'K';
 
     const boardUndo = board.makeMove(move.from, move.to);
     // A reveal is public, and what it reveals is the piece's *true* colour — which in 混斗 is not
@@ -389,11 +417,26 @@ export class JieqiGame {
       noteLearned(this.knowledge, color, capturedPiece.kind, capturedPiece.color);
     }
 
+    let duel: DuelInfo | null = null;
+    if (isDuel) {
+      const x = fileOf(move.from);
+      const lo = Math.min(rankOf(move.from), rankOf(move.to));
+      const hi = Math.max(rankOf(move.from), rankOf(move.to));
+      const line: number[] = [];
+      for (let y = lo + 1; y < hi; y++) line.push(squareOf(x, y));
+      duel = {
+        won: board.kingSq[other(color)] < 0,
+        line,
+        blocker: firstBlockerOnFile(board, move.from, move.to),
+      };
+    }
+
     const opponent = other(color);
     const gaveCheck = this.inCheck(opponent);
     // 混斗 only: the piece just turned over may have gone to the opponent, and it may be checking the
     // side that moved it. Legal, and reported — the general is then the opponent's for the taking.
-    const selfCheck = !isKingSafe(board, color);
+    // A duel is never a selfCheck: its own loser is decided by the line, not by a hanging general.
+    const selfCheck = !isDuel && !isKingSafe(board, color);
     this.halfMoveClock = capturedPiece ? 0 : this.halfMoveClock + 1;
     this.lastMove = move;
     this.bump(board.key);
@@ -407,16 +450,21 @@ export class JieqiGame {
       revealedKind: wasHidden ? piece.kind : null,
       revealedColor: wasHidden ? piece.color : null,
       selfCheck,
-      captured: capturedPiece
-        ? {
-            pieceId: capturedPiece.id,
-            square: move.to,
-            color: capturedPiece.color,
-            hidden: capturedPiece.hidden,
-            kind: capturedPiece.kind,
-          }
-        : null,
+      // A duel the charging king lost captures nothing — the mover's own general died instead, and
+      // the enemy king never moved. The win case carries the enemy king like any ordinary capture,
+      // because that is what the view has to spin away.
+      captured:
+        capturedPiece && (!isDuel || (duel as DuelInfo).won)
+          ? {
+              pieceId: capturedPiece.id,
+              square: move.to,
+              color: capturedPiece.color,
+              hidden: capturedPiece.hidden,
+              kind: capturedPiece.kind,
+            }
+          : null,
       gaveCheck,
+      duel,
       notation,
     };
 
@@ -499,6 +547,12 @@ export class JieqiGame {
       if (this.board.kingSq.black < 0) {
         return { winner: 'red', kind: 'checkmate', text: '黑方将帅被吃，红方胜' };
       }
+      // 迷雾 双方仅剩将帅 → 判和 (user 2026-09-15): with nothing left on the board but the two
+      // kings, nobody can win — the kings can never reach each other (palace-bound, and the file
+      // between two lone kings is never visible enough for a 一骑讨), so the only terminal is a draw.
+      if (onlyKingsLeft(this.board)) {
+        return { winner: null, kind: 'idle', text: '双方仅剩将帅，判和' };
+      }
       if (this.halfMoveClock >= this.idlePlies) {
         return { winner: null, kind: 'idle', text: '久无吃子，判和' };
       }
@@ -546,4 +600,13 @@ export class JieqiGame {
 
     return null;
   }
+}
+
+/** True when nothing but the two kings is left on the board. */
+function onlyKingsLeft(board: Board): boolean {
+  for (let sq = 0; sq < SQUARES; sq++) {
+    const piece = board.at(sq);
+    if (piece && piece.kind !== 'K') return false;
+  }
+  return true;
 }

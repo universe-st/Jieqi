@@ -23,6 +23,7 @@
 import type Phaser from 'phaser';
 import { stageRectOf, type Widget } from '@phaser-mvvm/phaser';
 import type { Difficulty } from '../ai';
+import type { Board } from '../core/board';
 import { toChineseNotation } from '../core/notation';
 import type { JieqiGame, MoveEvent } from '../core/rules';
 import {
@@ -224,11 +225,28 @@ export interface Backdoor {
   /** The player-visible board as one string, for eyeballing. */
   ascii(): string;
   quiesce(ms?: number): Promise<void>;
+  /**
+   * Overwrites the current match's board with a hand-built position and rebuilds the picture.
+   *
+   * The acceptance gap this fills: rules like the 一骑讨 duel only arise in specific positions, and
+   * waiting for a random playout to reach one is neither fast nor reproducible. `rows` is the same
+   * 9×10 diagram the rules tests parse — upper case is red, lower case is black, `.` is empty, all
+   * pieces are face up, and exactly two kings must be present. The match's mode/fog flag and the
+   * deal's side are kept; history, repetitions, the result and the king-seen beliefs are reset, and
+   * the turn goes to the player. This is a *probe*, not a feature: `truth` already exposes every
+   * identity, so nothing here reads more than the acceptance tool shows by design.
+   */
+  setPosition(rows: string[]): void;
 }
 
 function pieceGlyph(color: Color, kind: Kind): string {
   return KIND_NAME[color][kind];
 }
+
+/** ASCII diagram glyphs for {@link Backdoor.setPosition} — the same map the rules tests parse. */
+const GLYPH: Record<string, Kind> = { k: 'K', a: 'A', e: 'E', h: 'H', r: 'R', c: 'C', p: 'P' };
+/** Piece ids for probe-placed pieces; high so they can never collide with a dealt match's ids. */
+let probeId = 100_000;
 
 export function installBackdoor(game: Phaser.Game): Backdoor {
   const errors: string[] = [];
@@ -380,7 +398,7 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
   };
 
   const api: Backdoor = {
-    version: '1.5.6',
+    version: '1.6.0',
 
     screen,
 
@@ -715,6 +733,73 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
 
     ascii() {
       return view().join('\n');
+    },
+
+    setPosition(rows: string[]) {
+      const s = scene();
+      const engine = match();
+      if (!engine) throw new Error('__JIEQI__: no match on this board');
+      if (rows.length !== 10) {
+        throw new Error(`__JIEQI__: setPosition expects 10 rows, got ${rows.length}`);
+      }
+      const board = engine.board;
+      let kings = 0;
+      for (let y = 0; y < 10; y++) {
+        const row = rows[y] as string;
+        if (row.length !== 9) {
+          throw new Error(`__JIEQI__: row ${y} has ${row.length} files, expected 9`);
+        }
+        for (let x = 0; x < 9; x++) {
+          const ch = row[x] as string;
+          const sq = y * 9 + x;
+          board.squares[sq] = null;
+          if (ch === '.') continue;
+          const kind = GLYPH[ch.toLowerCase()];
+          if (!kind) throw new Error(`__JIEQI__: unknown glyph '${ch}'`);
+          if (kind === 'K') kings += 1;
+          board.squares[sq] = {
+            id: probeId++,
+            color: ch === ch.toUpperCase() ? 'red' : 'black',
+            kind,
+            homeKind: kind,
+            hidden: false,
+          };
+        }
+      }
+      if (kings !== 2) {
+        throw new Error(`__JIEQI__: setPosition needs exactly two kings, got ${kings}`);
+      }
+      // The probe replaces the *position*, not the match: mode/fog stay, the record is reset, the
+      // turn goes to the player (a probe position is there to be played by whoever is watching), and
+      // each side's belief about the enemy king starts at where the diagram put it.
+      (engine as unknown as { history: unknown[] }).history.length = 0;
+      engine.result = null;
+      engine.halfMoveClock = 0;
+      engine.lastMove = null;
+      (engine as unknown as { repetitions: Map<number, number> }).repetitions.clear();
+      engine.kingSeen = { red: board.kingSq.black, black: board.kingSq.red };
+      board.side = s.playerColor;
+      board.rehash();
+      const sceneState = s as unknown as {
+        selected: number | null;
+        legalForSelected: unknown[];
+        sendsCheck: ReadonlySet<number>;
+        visiblePlies: boolean[];
+        board: { clearHighlights(): void; reconcile(board: Board): void };
+        applyFog(): void;
+        syncVm(): void;
+        refreshDanger(): void;
+      };
+      sceneState.selected = null;
+      sceneState.legalForSelected = [];
+      sceneState.sendsCheck = new Set();
+      sceneState.visiblePlies.length = 0;
+      s.vm.reset();
+      sceneState.board.clearHighlights();
+      sceneState.applyFog();
+      sceneState.board.reconcile(board);
+      sceneState.syncVm();
+      sceneState.refreshDanger();
     },
 
     async quiesce(ms = 600) {

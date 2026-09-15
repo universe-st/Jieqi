@@ -108,11 +108,12 @@ export function generatePieceMoves(board: Board, from: number, out: Move[]): voi
         if (!inPalace(color, squareOf(tx, ty))) continue;
         addTarget(board, from, tx, ty, color, out);
       }
-      // 迷雾 mode (rule F2): a king facing the enemy king along a clear, *visible* file may take it —
-      // the flying general. The enemy king leaves the board the moment the move is played, so the
-      // position is safe; `isKingSafeAfter` is what keeps the move legal exactly when the file was
-      // visible to the mover, which is the whole rule.
-      if (board.fog && kingsFaceEachOtherFog(board, color)) {
+      // 迷雾 一骑讨 (rule F6): a king may fly at an enemy king that stands on the same file, is
+      // visible to the mover, and is not guarded by a visible blocker. The attempt is a gamble —
+      // hidden pieces on the line kill the charging king (resolved in `Board.makeMove`) — so it is
+      // an *option*, not a check: the enemy king merely being in sight does not put its owner in
+      // check, only a file the *checked* side can see as clear does (`kingsFaceEachOtherFog`).
+      if (board.fog && canDuelFog(board, color)) {
         const foe = board.kingSq[other(color)];
         if (foe >= 0) out.push({ from, to: foe });
       }
@@ -376,6 +377,10 @@ export function kingsFaceEachOther(board: Board): boolean {
  * simply not a facing until the fog lifts and the line reads through. `color` is the side whose king
  * would be on the receiving end of the flying attack, which is also the side the rule demands *can
  * see* the attack: you cannot be checked by something you cannot see.
+ *
+ * Since 1.6.0 this predicate drives the *check* half of the 将帅碰头 only (a file the checked side
+ * can see as clear is a duel the attacker cannot lose — a real threat). The attacker's own option to
+ * attempt the risky 一骑讨 uses the weaker `canDuelFog` instead.
  */
 export function kingsFaceEachOtherFog(board: Board, color: Color): boolean {
   const red = board.kingSq.red;
@@ -388,6 +393,39 @@ export function kingsFaceEachOtherFog(board: Board, color: Color): boolean {
   for (let y = lo + 1; y < hi; y++) {
     const at = squareOf(x, y);
     if (board.at(at) || !isSquareSeen(board, color, at)) return false;
+  }
+  return true;
+}
+
+/**
+ * 迷雾 一骑讨 (rule F6, user 2026-09-15): may `color`'s king fly at the enemy king?
+ *
+ * The duel is the attacker's *option*, and it is a gamble: the enemy king merely has to be
+ * **visible** to the mover and the file between the kings must show no **visible** blocker —
+ * hidden pieces may still sit there, and the resolution reads the truth (`Board.makeMove`): a truly
+ * clear file wins, any hidden blocker kills the charging king.
+ *
+ * `kingsFaceEachOtherFog` above is deliberately *not* used here: that predicate asks whether the
+ * *checked* side can see the attack, which is exactly the case where the duel is guaranteed to win
+ * (a file the checked side sees as empty really is empty). The duel's own gate is the mover's view —
+ * weaker, which is the risk.
+ */
+export function canDuelFog(board: Board, color: Color): boolean {
+  if (!board.fog) return false;
+  const king = board.kingSq[color];
+  const foe = board.kingSq[other(color)];
+  if (king < 0 || foe < 0) return false;
+  if (fileOf(king) !== fileOf(foe)) return false;
+  // The enemy king must be in the mover's vision. The king's own sight along a clear, visible file
+  // counts (vision.ts's F2 block) — so the old guaranteed flying general is the guaranteed subset
+  // of the duel, and every other way of seeing the enemy king makes the gamble available too.
+  if (!isSquareSeen(board, color, foe)) return false;
+  const lo = Math.min(rankOf(king), rankOf(foe));
+  const hi = Math.max(rankOf(king), rankOf(foe));
+  for (let y = lo + 1; y < hi; y++) {
+    const at = squareOf(fileOf(king), y);
+    // A visible piece on the line blocks the attempt; a fogged one is the gamble itself.
+    if (board.at(at) && isSquareSeen(board, color, at)) return false;
   }
   return true;
 }

@@ -8,7 +8,7 @@
 
 import Phaser from 'phaser';
 import type { Board } from '../core/board';
-import type { CapturedInfo, MoveEvent } from '../core/rules';
+import type { CapturedInfo, DuelInfo, MoveEvent } from '../core/rules';
 import { type Move, SQUARES, fileOf, rankOf } from '../core/types';
 import { dust, impact } from './fx';
 import {
@@ -426,6 +426,49 @@ export class BoardView {
         });
       });
     });
+  }
+
+  /**
+   * The 一骑讨 (rule F6) finale: the charging king darts down the revealed file — with the golden
+   * aura — and the duel resolves: a clear run ends with the enemy king spinning away (win), a
+   * collision ends with the charging king dying on the blocker (loss).
+   *
+   * The scene has already revealed the file (the mist off `duel.line`) before calling this, so the
+   * player sees the field the king is about to charge into.
+   */
+  async playDuelCharge(board: Board, event: MoveEvent): Promise<void> {
+    const duel = event.duel as DuelInfo;
+    const jobs: Promise<void>[] = [];
+    const mover = this.viewOf(event.pieceId);
+    if (duel.won) {
+      if (event.captured) jobs.push(this.playCapture(event.captured, this.local(event.move.to)));
+    }
+    if (mover) {
+      const target = duel.won
+        ? this.local(event.move.to)
+        : this.local(duel.blocker ?? event.move.to);
+      // A king charging out of the mist starts invisible and burns in on the way.
+      const emerges = !mover.visible;
+      jobs.push(
+        (async () => {
+          await mover.chargeTo(target.x, target.y, { fadeIn: emerges });
+          this.options.onCue?.('place');
+          dust(this.scene, target.x, target.y, this.pieceLayer.depth + 5);
+          if (!duel.won) {
+            // The charge hit a blocker: the king itself is eaten — it spins away where it fell, the
+            // blocker stays, and the enemy general never moved.
+            this.options.onCue?.('capture');
+            impact(this.scene, target.x, target.y, C.cinnabar, {
+              depth: this.pieceLayer.depth + 6,
+            });
+            this.pieces.delete(event.pieceId);
+            await mover.spinAway().then(() => mover.destroy());
+          }
+        })(),
+      );
+    }
+    await this.track(Promise.all(jobs));
+    this.reconcile(board);
   }
 
   /** Rewinds a move, for 悔棋. */

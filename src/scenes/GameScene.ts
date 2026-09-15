@@ -34,7 +34,7 @@ import { audioDirector, type AudioDirector } from '../audio/AudioDirector';
 import type { Board } from '../core/board';
 import { hangingSquares, landsHangingAs } from '../core/danger';
 import { generateMoves, isKingSafeAfter, isSquareAttacked } from '../core/moves';
-import { JieqiGame, type MoveEvent } from '../core/rules';
+import { JieqiGame, type DuelInfo, type MoveEvent } from '../core/rules';
 import { randomSeed } from '../core/rng';
 import {
   COLOR_NAME,
@@ -46,7 +46,7 @@ import {
 } from '../core/types';
 import { foggedBoardFor, visibleSquares } from '../core/vision';
 import { BoardView, type BoardCue, type DangerMark } from '../ui/BoardView';
-import { openDifficultyDialog, openVolumeDialog } from '../ui/dialogs';
+import { openDifficultyDialog, openModeHelpDialog, openVolumeDialog } from '../ui/dialogs';
 import { banner, petalFall, screenWash, withTimeout } from '../ui/fx';
 import { BOARD_HEIGHT, BOARD_WIDTH, C, DESIGN_WIDTH, HUD_TOP_HEIGHT } from '../ui/palette';
 import { applyRenderScale } from '../ui/render-scale';
@@ -358,6 +358,15 @@ export class GameScene extends Phaser.Scene {
             onClick: this.tap(() => this.confirm('认输', '确定要认输吗？', () => this.resign())),
           });
           Spacer({ flex: true });
+          // 玩法介绍 — one tap from the board in every mode: the ？ explains the current mode's rules.
+          Button('？', {
+            variant: 'ghost',
+            size: 'sm',
+            width: 44,
+            name: 'helpButton',
+            label: '玩法介绍',
+            onClick: this.tap(() => this.openModeHelp()),
+          });
           Button('菜单', {
             variant: 'ghost',
             size: 'sm',
@@ -764,7 +773,13 @@ export class GameScene extends Phaser.Scene {
       // Roll the mist to the new position *before* the animation: a piece arriving on a square the
       // new vision reveals lands in the clear, and one moving into fog is swallowed as it travels.
       this.applyFog();
-      await withTimeout(this.board.playMove(this.jieqi.board, event));
+      // 迷雾 一骑讨 (rule F6): a duel is its own show — banner, reveal of the file, golden charge —
+      // and it always ends the game, so the ordinary move animation is skipped for it.
+      if (event.duel) {
+        await withTimeout(this.playDuel(event), 7500);
+      } else {
+        await withTimeout(this.board.playMove(this.jieqi.board, event));
+      }
       this.afterMove(event);
       if (await this.finishIfOver()) return;
       if (this.jieqi.sideToMove === this.ai) await this.runAi();
@@ -842,7 +857,42 @@ export class GameScene extends Phaser.Scene {
     void banner(this, '禁止立即吃将', '请先解将 · 另选一步', C.check, { holdMs: 760 });
   }
 
+  /**
+   * 迷雾 一骑讨 (rule F6): the whole spectacle of a king flying at the enemy king.
+   *
+   * Sequence (user 2026-09-15): banner 一骑讨！ → the file between the generals is revealed (the mist
+   * lifts, the hidden pieces on it surface) → the king charges with a golden aura. A clear run takes
+   * the enemy general and wins; a blocker is hit and the charging king dies. Either way the game is
+   * over, and `finishIfOver` lands the 胜/负 verdict afterwards.
+   */
+  private async playDuel(event: MoveEvent): Promise<void> {
+    const duel = event.duel as DuelInfo;
+    this.audio.play('check');
+    const duelBanner = banner(this, '一骑讨！', '将帅对决 · 一决生死', C.gold, { holdMs: 800 });
+    // The reveal is the second beat: let the banner slam in, then lift the mist off the file so the
+    // player sees the field the king is about to charge into.
+    await new Promise<void>((resolve) => this.time.delayedCall(400, resolve));
+    const revealSet = new Set<number>(this.fogVisible);
+    for (const sq of duel.line) revealSet.add(sq);
+    this.board.setFog(revealSet);
+    this.board.reconcile(this.jieqi.board);
+    await duelBanner;
+    await this.board.playDuelCharge(this.jieqi.board, event);
+  }
+
   private afterMove(event: MoveEvent): void {
+    // 迷雾 一骑讨 (rule F6): the duel's animation already told the whole story — the reveal showed
+    // the file, the charge showed who fell. The status line closes it; nothing else needs announcing
+    // (a duel always ends the game, so the victory/defeat banner follows immediately).
+    if (event.duel) {
+      this.visiblePlies.push(true);
+      this.syncVm();
+      this.board.setLastMove(event.move);
+      this.vm.status.value = event.duel.won
+        ? '一骑讨成功，直取敌帅！'
+        : '一骑讨失败，将帅阵亡';
+      return;
+    }
     // 迷雾: a move played where the player cannot see it — the to-square is outside their vision —
     // is announced with one neutral line and nothing else. No notation (it would name the square the
     // piece went to), no 翻出X (the flip happened in the mist), no capture name; the log row is
@@ -1032,7 +1082,11 @@ export class GameScene extends Phaser.Scene {
       }
       const event = this.jieqi.apply(chosen);
       this.applyFog();
-      await withTimeout(this.board.playMove(this.jieqi.board, event));
+      if (event.duel) {
+        await withTimeout(this.playDuel(event), 7500);
+      } else {
+        await withTimeout(this.board.playMove(this.jieqi.board, event));
+      }
       this.afterMove(event);
       await this.finishIfOver();
     } finally {
@@ -1075,6 +1129,17 @@ export class GameScene extends Phaser.Scene {
         },
       },
     );
+  }
+
+  /**
+   * ？ — the current mode's rules, in a scrollable dialog.
+   *
+   * The same content the start menu's 玩法 dialog hints at, in full: the board asks "what am I
+   * playing?" and the dialog answers with that mode's actual rules, not a one-liner.
+   */
+  private openModeHelp(): void {
+    if (this.locked) return;
+    openModeHelpDialog(this.mvvm, this.vm.mode.value);
   }
 
   /**
