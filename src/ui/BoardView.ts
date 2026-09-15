@@ -386,6 +386,46 @@ export class BoardView {
 
     await this.track(Promise.all(jobs));
     this.reconcile(board);
+    // 迷雾 (user 1.5.6): an enemy piece that captured while standing out of the player's vision — the
+    // player saw their piece die but not who did it. Show the capturer for a beat (still face-down:
+    // the fog may hide identity, not the fact of the capture), then let the mist swallow it again.
+    // King captures are excluded — capturing the general ends the game, and the endgame reveal shows
+    // everything anyway.
+    const mistCapturer =
+      event.captured !== null &&
+      event.captured.kind !== 'K' &&
+      mover !== undefined &&
+      this.fogVisible !== null &&
+      !this.fogVisible.has(event.move.to);
+    if (mistCapturer) {
+      await this.flashCapturer(mover as PieceView);
+      this.reconcile(board);
+    }
+  }
+
+  /**
+   * 迷雾: briefly reveal a capturer that sits out of the player's vision, then hide it again.
+   *
+   * Fades in fast, holds about a second (long enough to see whose piece just died and where the eater
+   * stands), then dissolves back into the mist and stops rendering.
+   */
+  private flashCapturer(view: PieceView): Promise<void> {
+    view.setVisible(true).setAlpha(0);
+    return new Promise((resolve) => {
+      this.scene.tweens.add({ targets: view, alpha: 1, duration: 150, ease: 'Quad.easeOut' });
+      this.scene.time.delayedCall(1000, () => {
+        this.scene.tweens.add({
+          targets: view,
+          alpha: 0,
+          duration: 320,
+          ease: 'Quad.easeIn',
+          onComplete: () => {
+            view.setVisible(false);
+            resolve();
+          },
+        });
+      });
+    });
   }
 
   /** Rewinds a move, for 悔棋. */

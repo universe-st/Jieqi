@@ -1076,4 +1076,23 @@ JIEQI_VERSION_CODE=22 ./build-android-release.sh
 
 下一版 versionCode 从 **23** 起。
 
+### 14.6 签名 release 包（1.5.6）— 迷雾落子无方框 + 雾中吃子短暂显形
+
+```
+JIEQI_VERSION_CODE=23 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.5.6-release.apk`，**17,879,203 B** |
+| badging | `com.jieqi.game`、versionName **1.5.6**、versionCode **23**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（同一把密钥） |
+| 改动 | ① **迷雾落子不显示方框**（用户拍板）：`afterMove` 不可见分支 `setLastMove(event.move)` → `setLastMove(null)`——雾中着法不产生任何落子标记，不再把迷雾藏住的 from/to 指给玩家。② **雾中吃子短暂显形**（用户拍板）：`BoardView.playMove` 在动画+reconcile 后检测 `mistCapturer = captured!==null && captured.kind!=='K' && fogVisible!==null && !fogVisible.has(move.to)` → `flashCapturer`：150ms 渐显 + 保持 1s + 320ms 渐隐后 `setVisible(false)`（仍背面朝上，雾藏身份不藏事实），再 reconcile 恢复雾态；吃将（终局）除外 |
+| 门禁 | typecheck 0 错；`pnpm test` **121/121** |
+| 浏览器实测 | headless：① 迷雾中电脑落子静止后截图——**无金色落子方框**，棋盘正常；② 第 10 手电脑雾中吃子（状态=对方已落子、我方子数-1），吃子动画完成 +0.7s 截图命中吃子棋子**半透明渐显中**（1 秒显形窗口内）；CDP daemon 反复崩断，显形结束后的"重新隐入迷雾"态由代码路径保证（flashCapturer onComplete setVisible(false) + 末尾 reconcile） |
+| 包内核对 | `assets/www/assets/index-*.js`：对方已落子×1、迷雾中×1、1.5.6×1 |
+| 坚果云 | 已上传 `揭棋_20260915_v9.apk`（17,879,203 B，揭棋文件夹，PROPFIND `getcontentlength` 与本地字节数一致） |
+
+下一版 versionCode 从 **24** 起。
+
 

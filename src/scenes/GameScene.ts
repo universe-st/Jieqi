@@ -857,7 +857,9 @@ export class GameScene extends Phaser.Scene {
       // loudly as 将军 (user 1.5.2): banner + wash + cue sound, so a glance catches it even when the
       // board shows no change at all.
       this.vm.status.value = '对方已落子（迷雾中，看不清具体走法）';
-      this.board.setLastMove(event.move);
+      // No last-move marker either: drawing the from/to squares of a move the player cannot see
+      // would hand them the very square the fog is hiding (user 1.5.6).
+      this.board.setLastMove(null);
       if (!this.jieqi.result) {
         this.audio.play('place');
         screenWash(this, C.fog, 0.14);
