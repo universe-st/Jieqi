@@ -90,7 +90,14 @@ export class BoardView {
   private readonly fogTiles: (Phaser.GameObjects.Image | null)[] = new Array(SQUARES).fill(null);
   /** The drifting mist wisps — the "particle" half of 迷雾. */
   private readonly fogParticles: Phaser.GameObjects.Image[] = [];
-  private fogEnabled = false;
+  /**
+   * The squares currently in view, or `null` while fog is off.
+   *
+   * Read by {@link reconcile} to hide the piece views standing on fogged squares — a fogged square
+   * must not render its piece at all, not merely cover it, so nothing can ever leak through the
+   * mist. `null` (标准/混斗, and the end-of-match reveal) shows everything.
+   */
+  private fogVisible: ReadonlySet<number> | null = null;
 
   /**
    * Whether the board is drawn from black's side.
@@ -442,11 +449,14 @@ export class BoardView {
       view.setPosition(local.x, local.y);
       // The engine still calls an unplayed piece `hidden` after the match is over; the board does not.
       const dimmed = this.over && piece.hidden;
+      // 迷雾: a piece standing on a fogged square is not rendered at all — hiding it by covering is
+      // not enough, the view itself must not draw it (belt-and-suspenders on top of the opaque tile).
+      const fogged = this.fogVisible !== null && !this.fogVisible.has(sq);
       view
         .setScale(1)
         .setAlpha(dimmed ? REVEALED_ALPHA : 1)
         .setAngle(0)
-        .setVisible(true);
+        .setVisible(!fogged);
       if (piece.hidden) {
         if (dimmed) view.showRevealed(piece.kind);
         else view.showHidden();
@@ -607,19 +617,24 @@ export class BoardView {
    *
    * `null` switches the fog off entirely — the mode the board uses in 标准/混斗 and at the end of a
    * match, when the reveal turns the whole board up. Called by the scene after every position change;
-   * tiles and wisps fade rather than pop so a move's new vision reads as the mist rolling back.
+   * tiles fade rather than pop so a move's new vision reads as the mist rolling back.
+   *
+   * Piece visibility is *not* touched here (the move animation is usually mid-flight when this runs —
+   * a piece gliding out of a now-fogged square must stay visible until it lands); {@link reconcile}
+   * applies it at rest. `null` is the one exception: disabling fog happens at rest, so every piece
+   * view is shown at once.
    */
   setFog(visible: ReadonlySet<number> | null): void {
-    this.fogEnabled = visible !== null;
-    for (let sq = 0; sq < SQUARES; sq++) {
-      const show = this.fogEnabled && !(visible as ReadonlySet<number>).has(sq);
-      this.setFogTile(sq, show);
-    }
-    if (this.fogEnabled) {
-      this.sweepFogParticles(visible as ReadonlySet<number>);
-    } else {
+    this.fogVisible = visible;
+    if (visible === null) {
       this.clearFogLayer();
+      for (const view of this.pieces.values()) view.setVisible(true);
+      return;
     }
+    for (let sq = 0; sq < SQUARES; sq++) {
+      this.setFogTile(sq, !visible.has(sq));
+    }
+    this.sweepFogParticles(visible);
   }
 
   /** How many squares are fogged right now — the acceptance run's reading of the picture. */
@@ -657,25 +672,14 @@ export class BoardView {
       .setAlpha(0);
     this.fogLayer.add(tile);
     this.fogTiles[square] = tile;
-    // A square's mist settles in, then breathes slowly on its own phase so the fog never reads as a
-    // grid of identical patches pulsing in lockstep.
-    const phase = ((square * 137) % 2200) + 300;
+    // Settle to fully opaque: a tile that never quite covers its square is a tile that leaks its
+    // piece through the mist, which is exactly what the mode must not do. The mist's motion lives on
+    // the wisps; the tile itself is a solid wall.
     this.scene.tweens.add({
       targets: tile,
-      alpha: 0.9,
-      duration: 320,
+      alpha: 1,
+      duration: 260,
       ease: 'Quad.easeOut',
-      onComplete: () => {
-        this.scene.tweens.add({
-          targets: tile,
-          alpha: { from: 0.8, to: 0.96 },
-          duration: 1700 + phase,
-          delay: phase,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
-        });
-      },
     });
   }
 
@@ -752,7 +756,6 @@ export class BoardView {
       wisp.destroy();
     }
     this.fogParticles.length = 0;
-    this.fogEnabled = false;
   }
 
   /** Highlights the general that is currently in check, or clears it. */

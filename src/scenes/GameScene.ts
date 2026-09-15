@@ -747,8 +747,8 @@ export class GameScene extends Phaser.Scene {
       if (this.jieqi.sideToMove === this.ai) await this.runAi();
     } catch (error) {
       // A dropped move must never wedge the game: reconcile and let the player try again.
-      this.board.reconcile(this.jieqi.board);
       this.applyFog();
+      this.board.reconcile(this.jieqi.board);
       this.vm.status.value = byPlayer ? '这一步走不了，请另选一步' : '对手走子异常';
       throw error;
     } finally {
@@ -828,7 +828,10 @@ export class GameScene extends Phaser.Scene {
     this.visiblePlies.push(visible);
     this.syncVm();
     if (!visible) {
-      this.vm.status.value = '电脑在迷雾中行棋…';
+      // The player saw nothing of the move — and in the worst case the whole visible board is
+      // unchanged, in which case this line is the *only* thing telling them the opponent played at
+      // all. Saying so out loud is therefore mandatory, not optional.
+      this.vm.status.value = '对方已落子（迷雾中，看不清具体走法）';
       this.board.setLastMove(event.move);
       this.announceCheck();
       return;
@@ -1092,8 +1095,10 @@ export class GameScene extends Phaser.Scene {
         this.visiblePlies.pop();
         await withTimeout(this.board.playUndo(this.jieqi.board, event));
       }
-      this.board.reconcile(this.jieqi.board);
+      // 迷雾: fog first, then reconcile — the piece views' visibility is applied against the fog of
+      // the position we are rewinding *to*, not the one we just left.
       this.applyFog();
+      this.board.reconcile(this.jieqi.board);
       this.board.setLastMove(null);
       // Same visibility gate as `announceCheck`: no glow around a king the player cannot see.
       const checked = this.jieqi.inCheck(this.jieqi.sideToMove)

@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { fogCandidates, chooseMove } from '../src/ai/engine';
 import { generateMoves, isKingSafe, isKingSafeAfter, kingsFaceEachOtherFog } from '../src/core/moves';
 import { JieqiGame } from '../src/core/rules';
-import { foggedBoardFor, resetVisionCache, visibleSquares } from '../src/core/vision';
+import { foggedBoardFor, isSquareSeen, resetVisionCache, visibleSquares } from '../src/core/vision';
 import type { Board } from '../src/core/board';
 import type { Piece, Move } from '../src/core/types';
 import { emptyBoard, finalize, fromAscii, put, putHidden } from './support/position';
@@ -143,8 +143,30 @@ describe('视野 (vision)', () => {
     const view = foggedBoardFor(board, 'red');
     expect(view.at(sq('0,2'))).not.toBeNull();
     expect(view.at(sq('8,1'))).toBeNull();
-    // The black king is deliberately kept even when unseen — a search without a target king cannot mate.
+    // Without a believed-king override (the player's display-side boards), the enemy king stays at
+    // its true square: what the observer physically sees is the real position.
     expect(view.kingSq.black).toBe(board.kingSq.black);
+  });
+
+  it('the AI-side fogged board places the enemy king where it was last seen, not where it is', () => {
+    const board = fromAscii(QUIET);
+    board.fog = true;
+    // Black (the observer) believes the red king is at (4,2); the real king is at (4,9).
+    const view = foggedBoardFor(board, 'black', sq('4,2'));
+    expect(view.kingSq.red).toBe(sq('4,2'));
+    expect(view.at(sq('4,9'))).toBeNull();
+    expect(view.at(sq('4,2'))?.kind).toBe('K');
+  });
+
+  it('a believed king square the observer can see holding another piece is not overwritten', () => {
+    const board = fromAscii(QUIET);
+    board.fog = true;
+    // The believed square (4,2) holds a black rook — black's own piece, always in its own view, so
+    // the AI would *know* the king is not there; the belief stays at the true square instead.
+    put(board, 'black', 'R', 4, 2);
+    finalize(board);
+    const view = foggedBoardFor(board, 'black', sq('4,2'));
+    expect(view.kingSq.red).toBe(sq('4,9'));
   });
 });
 
@@ -270,6 +292,29 @@ describe('迷雾 AI (fogged candidates and worlds)', () => {
     expect(decision).not.toBeNull();
     if (decision) {
       expect(candidates.some((c) => c.from === decision.move.from && c.to === decision.move.to)).toBe(true);
+    }
+  });
+
+  it('kingSeen tracks the enemy king by last sight, never by omniscience (rule F3)', () => {
+    const game = JieqiGame.create({ mode: 'fog', seed: 9 });
+    // Everyone knows the deal: each side's belief opens on the enemy king's home square.
+    expect(game.kingSeen.red).toBe(sq('4,0'));
+    expect(game.kingSeen.black).toBe(sq('4,9'));
+    // Play some real moves; the invariant that defines the rule: whenever an observer currently sees
+    // the enemy king, its belief is that exact square — and when the king is out of sight the belief
+    // is allowed to be stale (that staleness is the whole point of letting it hide).
+    for (let i = 0; i < 14; i++) {
+      const moves = game.selectableMoves();
+      if (moves.length === 0) break;
+      game.apply(moves[0] as Move);
+      for (const observer of ['red', 'black'] as const) {
+        const foe = observer === 'red' ? 'black' : 'red';
+        const kingSq = game.board.kingSq[foe];
+        if (kingSq < 0) continue;
+        if (isSquareSeen(game.board, observer, kingSq)) {
+          expect(game.kingSeen[observer]).toBe(kingSq);
+        }
+      }
     }
   });
 

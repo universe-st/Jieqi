@@ -371,7 +371,9 @@ interface FogPlan {
  * guard is read off the real game.
  */
 export function fogCandidates(game: JieqiGame, color: Color): Move[] {
-  const view = foggedBoardFor(game.board, color);
+  // The enemy king sits where the AI last saw it, not where it really is (rule F3): a candidate list
+  // built around the true square would let the AI aim at a king it cannot see.
+  const view = foggedBoardFor(game.board, color, game.kingSeen[color]);
   const pseudo = generateMoves(view, color, []);
   const out: Move[] = [];
   for (const move of pseudo) {
@@ -403,7 +405,7 @@ function buildFogPlan(game: JieqiGame, color: Color): FogPlan {
   return {
     real,
     color,
-    base: foggedBoardFor(real, color),
+    base: foggedBoardFor(real, color, game.kingSeen[color]),
     unseen,
     ownPool: pools[color],
     enemyPool: pools[other(color)],

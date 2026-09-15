@@ -162,18 +162,38 @@ export function isSquareSeen(board: Board, color: Color, sq: number): boolean {
  * The board as `color` sees it: every piece the observer cannot see is gone, and the empty squares
  * it cannot see are its unknowns.
  *
- * The enemy king is deliberately *not* removed: a search with no enemy king cannot aim at a mate, and
- * a fog game whose AI cannot win is worse than one whose AI knows one square. Everything else the
- * observer cannot account for is treated as absent — the AI that reasons over this board treats those
- * squares as empty, which is the "看不见的敌子当作未知" contract the mode promises.
+ * The enemy king is the one piece with a position the observer may still reason about: it starts on
+ * its home square, and once it has been seen the observer keeps *that* square until it is seen again
+ * (`JieqiGame.kingSeen`). Pass that believed square in as `enemyKingAt` and the fogged board places
+ * the king there instead of at its true square — a king hiding in the mist is then genuinely hidable.
+ * Without the argument (the player's display-side fogged boards, the hints), the true square is kept,
+ * because what the observer physically *sees* is the real position, not their belief.
+ *
+ * Everything else the observer cannot account for is treated as absent — the AI that reasons over
+ * this board treats those squares as empty, which is the "看不见的敌子当作未知" contract the mode
+ * promises.
  */
-export function foggedBoardFor(board: Board, color: Color): Board {
+export function foggedBoardFor(board: Board, color: Color, enemyKingAt?: number): Board {
   const view = board.clone();
+  const foe = other(color);
   for (let sq = 0; sq < SQUARES; sq++) {
     const piece = view.at(sq);
     if (!piece || piece.kind === 'K') continue;
-    if (view.ownerAt(sq) !== other(color)) continue;
+    if (view.ownerAt(sq) !== foe) continue;
     if (!isSquareSeen(board, color, sq)) view.squares[sq] = null;
+  }
+  if (enemyKingAt !== undefined) {
+    const trueSq = view.kingSq[foe];
+    // Move the king to the believed square only when it is free — a square the observer can see
+    // holding another piece is a square they know the king is not on, so the belief simply stays put.
+    if (trueSq >= 0 && trueSq !== enemyKingAt && !view.at(enemyKingAt)) {
+      const king = view.at(trueSq);
+      if (king) {
+        view.squares[trueSq] = null;
+        view.squares[enemyKingAt] = king;
+        view.kingSq[foe] = enemyKingAt;
+      }
+    }
   }
   view.rehash();
   return view;

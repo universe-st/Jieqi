@@ -214,19 +214,26 @@ function drawPetal(g: Phaser.GameObjects.Graphics, color: number): void {
 }
 
 /**
- * 迷雾 mode: one soft-edged tile per fogged square.
+ * 迷雾 mode: one fully-opaque tile per fogged square.
  *
- * The falloff is square, not round, so a tile owns its whole square and four neighbours blend at the
- * corners instead of leaving a cross-shaped gap. The centre is fully opaque (a tile must hide a piece
- * standing on its square); only the rim fades, so adjacent tiles read as one continuous mist.
+ * The body is solid — a tile must completely hide whatever stands on its square — and only the outer
+ * rim fades, so adjacent tiles blend at the seam instead of showing a gap. The drifting wisps on top
+ * are what make it read as weather rather than paint; the tile itself never lets a piece through.
  */
 function drawFogTile(g: Phaser.GameObjects.Graphics, size: number): void {
   const half = size / 2;
-  const steps = 30;
-  for (let i = steps; i > 0; i--) {
-    const t = i / steps;
-    const s = half * t * 1.04; // a hair oversized, so tiles overlap instead of showing seams
-    const alpha = (1 - t) * (1 - t) * 2.4;
+  // Solid body out to ~86% of the half-size: well beyond a piece's rim (a piece is 19px on a 22px
+  // cell half), so nothing under the tile can leak around the edges.
+  const body = half * 0.86;
+  g.fillStyle(0x93a8c2, 1);
+  g.fillRect(half - body, half - body, body * 2, body * 2);
+  // The soft rim: nested squares from the body out to the edge, alpha falling to transparent, so two
+  // neighbouring tiles still look like one continuous mist at their shared border.
+  const steps = 16;
+  for (let i = 0; i < steps; i++) {
+    const t = (i + 1) / steps;
+    const s = half * (0.86 + t * 0.14);
+    const alpha = 1 - t;
     g.fillStyle(0x93a8c2, alpha);
     g.fillRect(half - s, half - s, s * 2, s * 2);
   }

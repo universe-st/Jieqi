@@ -981,4 +981,23 @@ JIEQI_VERSION_CODE=17 ./build-android-release.sh
 
 下一版 versionCode 从 **18** 起。
 
+### 14.1 签名 release 包（1.5.1）— 迷雾三修正
+
+```
+JIEQI_VERSION_CODE=18 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.5.1-release.apk`，**17,878,839 B** |
+| badging | `com.jieqi.game`、versionName **1.5.1**、versionCode **18**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（与 1.5.0 同一把密钥） |
+| 改动 | ① **F3 敌王按最后一次看见追踪**（用户拍板）：`JieqiGame.kingSeen` 记录各观察者上次见到敌方将帅的格子（默认敌王原位），每手按视野刷新、悔棋恢复；AI 的迷雾棋盘把敌王摆在 `kingSeen` 而非真位置 —— 取代 1.5.0 的「恒已知」例外，王真能藏进迷雾了（AI 会对着幻影王走棋，被真盘拒绝就顺延）。② **迷雾变实墙**：`TEX.fog` 瓦片内部全不透明（实体到半格 86% > 棋子半径 19），`BoardView.reconcile` 直接 `setVisible(false)` 雾格上的棋子视图（不是盖住、是不画），双重保险；`setFog(null)` 终局恢复显示全部。③ **「对方已落子」提示**：迷雾中电脑落子状态栏必报「对方已落子（迷雾中，看不清具体走法）」——视野信息完全没变时这是玩家知道对手走了一手的唯一信号 |
+| 门禁 | typecheck 0 错；`pnpm test` **117/117**（新增 kingSeen 追踪不变量、敌王接管位置、占位不覆盖 3 例） |
+| 浏览器实测 | **未完成**：本轮 headless 浏览器环境持续退化（vite + 全新浏览器也卡在 boot 场景、CDP daemon 反复断连），无法复跑迷雾局截图；引擎侧由 117 例单测覆盖（含迷雾 3 局无卡死自对弈），UI 三处改动为代码审阅 + `vite build` 编译通过。真机/桌面浏览器复核待用户确认 |
+| 包内核对 | `assets/www/assets/index-vCZgLt7Z.js`：对方已落子（迷雾中，看不清具体走法）×1、kingSeen×16、迷雾玩法×1、1.5.1×1 |
+| 坚果云 | 已上传 `揭棋_20260915_v4.apk`（17,878,839 B，PROPFIND `getcontentlength` 与本地字节数一致） |
+
+下一版 versionCode 从 **19** 起。
+
 

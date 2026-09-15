@@ -380,7 +380,7 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
   };
 
   const api: Backdoor = {
-    version: '1.5.0',
+    version: '1.5.1',
 
     screen,
 
@@ -688,6 +688,12 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
         tiles: s.fogTileCount,
         visible: s.visibleSquaresNow().map(label),
         mode: s.isFogMode,
+        kingSeen: {
+          // The AI's belief about where the player's king is (last-seen tracking), labelled like the
+          // rest of the probe so a run can assert a hidden king stays out of the AI's belief.
+          ai: label(s.engine.kingSeen[s.aiColor]),
+          player: label(s.engine.kingSeen[s.playerColor]),
+        },
       };
     },
 

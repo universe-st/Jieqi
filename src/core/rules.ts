@@ -25,8 +25,10 @@ import {
 import { generateMoves, isKingSafe, isKingSafeAfter } from './moves';
 import { toChineseNotation } from './notation';
 import { createRng, randomSeed } from './rng';
+import { isSquareSeen } from './vision';
 import {
   ARMY_LIST,
+  KING_SQUARE,
   type Color,
   type GameMode,
   type Identity,
@@ -110,6 +112,8 @@ interface HistoryRecord {
   /** Zobrist key of the position *after* the move, so undo can decrement its repetition count. */
   repetitionKey: number;
   lastMoveBefore: Move | null;
+  /** 迷雾: the king-seen tracker before the move, so undo puts the AI's belief back too. */
+  kingSeenBefore: Record<Color, number>;
 }
 
 export interface GameOptions {
@@ -149,6 +153,15 @@ export class JieqiGame {
   result: GameResult | null = null;
   halfMoveClock = 0;
   lastMove: Move | null = null;
+  /**
+   * 迷雾: each side's belief about where the **enemy** king is — the last square that side actually
+   * saw it on, falling back to its home square (everyone knows the deal). Kept on the game because it
+   * has to survive undo and clone, and updated after every fog move from the post-move vision
+   * ({@link updateKingSeen}). The AI's fogged board places the enemy king here instead of at its true
+   * square, which is what makes a king hiding in the mist actually hidable — until it is seen again,
+   * the AI only knows where it last was.
+   */
+  kingSeen: Record<Color, number> = { red: KING_SQUARE.black, black: KING_SQUARE.red };
 
   private repetitions = new Map<number, number>();
 
@@ -198,6 +211,7 @@ export class JieqiGame {
     copy.result = this.result;
     copy.halfMoveClock = this.halfMoveClock;
     copy.lastMove = this.lastMove;
+    copy.kingSeen = { red: this.kingSeen.red, black: this.kingSeen.black };
     copy.repetitions = new Map(this.repetitions);
     return copy;
   }
@@ -410,7 +424,13 @@ export class JieqiGame {
       resultBefore,
       repetitionKey: board.key,
       lastMoveBefore,
+      kingSeenBefore: { red: this.kingSeen.red, black: this.kingSeen.black },
     });
+
+    // 迷雾 only: after every move, each side's belief about the enemy king follows its vision — a
+    // king that is currently in sight gets its square recorded; a king out of sight keeps the square
+    // where it was last seen. This is what the AI's fogged board reads instead of the true square.
+    if (this.board.fog) this.updateKingSeen();
 
     this.result = this.computeResult();
     return event;
@@ -425,10 +445,27 @@ export class JieqiGame {
     this.halfMoveClock = record.halfMoveClockBefore;
     this.result = record.resultBefore;
     this.lastMove = record.lastMoveBefore;
+    this.kingSeen = { red: record.kingSeenBefore.red, black: record.kingSeenBefore.black };
     const count = this.repetitions.get(record.repetitionKey) ?? 0;
     if (count <= 1) this.repetitions.delete(record.repetitionKey);
     else this.repetitions.set(record.repetitionKey, count - 1);
     return record.event;
+  }
+
+  /**
+   * 迷雾: refreshes each side's belief about the enemy king from the current position's vision.
+   *
+   * The rule is deliberately simple — "where did I last see it": a king standing on a square the
+   * observer can see right now is recorded there; a king out of sight keeps the old square. No
+   * inference about where a vanished king went; the AI reasons against a possibly-stale position,
+   * which is exactly the honest cost of letting the enemy king hide in the mist.
+   */
+  private updateKingSeen(): void {
+    for (const observer of ['red', 'black'] as const) {
+      const kingSq = this.board.kingSq[other(observer)];
+      if (kingSq < 0) continue; // captured — the game is over, the belief no longer matters
+      if (isSquareSeen(this.board, observer, kingSq)) this.kingSeen[observer] = kingSq;
+    }
   }
 
   resign(color: Color): GameResult {
