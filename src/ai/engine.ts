@@ -36,7 +36,7 @@
 
 import type { Board } from '../core/board';
 import { sampleWorld, sampleWorldMixed } from '../core/info';
-import { generateMoves, isKingSafeAfter } from '../core/moves';
+import { generateMoves } from '../core/moves';
 import { toChineseNotation } from '../core/notation';
 import type { JieqiGame } from '../core/rules';
 import { createRng, randomSeed, type Rng } from '../core/rng';
@@ -377,7 +377,8 @@ export function fogCandidates(game: JieqiGame, color: Color): Move[] {
   const pseudo = generateMoves(view, color, []);
   const out: Move[] = [];
   for (const move of pseudo) {
-    if (!isKingSafeAfter(view, color, move)) continue;
+    // 迷雾 = 吃王棋 (rule F4): no king-safety filter — any move the piece can geometrically make is
+    // legal, so the only guard left is the repetition rule.
     if (game.wouldRepeat(move)) continue;
     out.push(move);
   }

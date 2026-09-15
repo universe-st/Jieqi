@@ -190,7 +190,16 @@ export class Searcher {
     for (const index of order) {
       if (this.aborted) break;
       const move = moves[index] as Move;
+      const victim = board.at(move.to);
       const undo = board.makeMove(move.from, move.to);
+      // 迷雾 吃王棋: a root move that takes the general wins on the spot — the game ends at the
+      // first capture, so there is no retaliation to search.
+      if (victim && victim.kind === 'K') {
+        board.unmakeMove(undo);
+        scores[index] = MATE;
+        if (MATE > alpha) alpha = MATE;
+        continue;
+      }
       const value = -this.negamax(board, opponent, this.depth - 1, -INF, -alpha + ROOT_SLACK, 1);
       board.unmakeMove(undo);
       if (this.aborted) break;
@@ -266,6 +275,13 @@ export class Searcher {
     for (const move of moves) {
       const victim = board.at(move.to);
       const undo = board.makeMove(move.from, move.to);
+      // 迷雾 吃王棋: taking the general ends the game right there — score it as the win it is,
+      // before any retaliation can be searched (the enemy general never gets to capture back).
+      if (victim && victim.kind === 'K') {
+        board.unmakeMove(undo);
+        this.path.pop();
+        return MATE - ply;
+      }
       const score = -this.negamax(board, other(color), depth - 1, -beta, -alpha, ply + 1);
       board.unmakeMove(undo);
       if (this.aborted) break;
@@ -331,7 +347,9 @@ export class Searcher {
       if (victim && victim.kind === 'K') return MATE - ply - 1;
 
       const undo = board.makeMove(move.from, move.to);
-      if (!isKingSafe(board, color)) {
+      // 迷雾 吃王棋: the capture may leave the capturer's own general exposed — that is legal now,
+      // and losing the general next move is the price the search has to see, not a filter to skip.
+      if (!board.fog && !isKingSafe(board, color)) {
         board.unmakeMove(undo);
         continue;
       }
@@ -349,6 +367,13 @@ export class Searcher {
     const out = this.movePool[ply] as Move[];
     out.length = 0;
     const pseudo = generateMoves(board, color, []);
+    // 迷雾 吃王棋 (rule F4): 送将合法 — the search inside a fogged world plays by the same rule as
+    // the real board, so no king-safety filter. A general left hanging is captured and scores as
+    // the mate it is (the king-capture terminals in this file).
+    if (board.fog) {
+      for (const move of pseudo) out.push(move);
+      return out;
+    }
     for (const move of pseudo) {
       const undo = board.makeMove(move.from, move.to);
       const safe = isKingSafe(board, color);

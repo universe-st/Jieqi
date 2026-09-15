@@ -265,6 +265,10 @@ export class JieqiGame {
    */
   legalMoves(color: Color = this.board.side): Move[] {
     const pseudo = generateMoves(this.board, color, []);
+    // 迷雾 = 吃王棋 (rule F4, user 2026-09-15): 送将不再是非法着法 — any move a piece can
+    // geometrically make is legal, including one that leaves the general exposed; the game ends only
+    // when a general is actually captured. No king-safety filter here at all.
+    if (this.board.fog) return pseudo;
     const legal: Move[] = [];
     for (const move of pseudo) {
       if (isKingSafeAfter(this.board, color, move)) legal.push(move);
@@ -484,6 +488,23 @@ export class JieqiGame {
    * load, and a test can ask about a hand-built diagram.
    */
   computeResult(): GameResult | null {
+    // 迷雾 = 吃王棋 (rule F4): the only way to win is to actually capture the enemy general, and the
+    // only way to lose is to have yours captured. 将死/困毙 — abstract rulings a fog player may not
+    // even be able to see — do not end the game; the first general taken does. Idle 判和 and resign
+    // are unchanged, and a general missing from the board is the one terminal state.
+    if (this.board.fog) {
+      if (this.board.kingSq.red < 0) {
+        return { winner: 'black', kind: 'checkmate', text: '红方将帅被吃，黑方胜' };
+      }
+      if (this.board.kingSq.black < 0) {
+        return { winner: 'red', kind: 'checkmate', text: '黑方将帅被吃，红方胜' };
+      }
+      if (this.halfMoveClock >= this.idlePlies) {
+        return { winner: null, kind: 'idle', text: '久无吃子，判和' };
+      }
+      return null;
+    }
+
     const side = this.board.side;
     const legal = this.legalMoves(side);
     if (legal.length === 0) {

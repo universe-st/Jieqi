@@ -15,7 +15,8 @@ import { JieqiGame } from '../src/core/rules';
 import { foggedBoardFor, isSquareSeen, resetVisionCache, visibleSquares } from '../src/core/vision';
 import type { Board } from '../src/core/board';
 import type { Piece, Move } from '../src/core/types';
-import { emptyBoard, finalize, fromAscii, put, putHidden } from './support/position';
+import { emptyBoard, finalize, fromAscii, put, putHidden, mv } from './support/position';
+import { SQUARES } from '../src/core/types';
 
 const sq = (name: string): number => {
   const [x, y] = name.split(',').map((part) => Number(part));
@@ -232,7 +233,7 @@ describe('将帅碰头 in fog (F1/F2)', () => {
     expect(isKingSafe(board, 'black')).toBe(false);
   });
 
-  it('moving into a facing the mover can see is illegal — it leaves the king exposed', () => {
+  it('moving into a visible facing leaves the king exposed — a blunder under F4, not an illegality', () => {
     const board = facingBoard(9, 4);
     // The blocker: a red rook on the file between the kings.
     put(board, 'red', 'R', 4, 5);
@@ -243,7 +244,9 @@ describe('将帅碰头 in fog (F1/F2)', () => {
     finalize(board);
     const rookAway = { from: sq('4,5'), to: sq('3,5') };
     // The file (4,5)…(4,8) is clear and fully visible to red once the rook steps off it: the move
-    // leaves the red general facing, and the ordinary 送将 filter refuses it.
+    // leaves the red general facing. Under rule F4 (迷雾 = 吃王棋) that is *legal* — 送将 is no longer
+    // an illegality — so `isKingSafeAfter` still reports the exposure (it is a blunder worth the
+    // general), but the legality filter no longer exists in fog.
     expect(isKingSafeAfter(board, 'red', rookAway)).toBe(false);
   });
 
@@ -256,6 +259,92 @@ describe('将帅碰头 in fog (F1/F2)', () => {
     const rookAway = { from: sq('4,5'), to: sq('3,5') };
     expect(kingsFaceEachOtherFog(board, 'red')).toBe(false);
     expect(isKingSafeAfter(board, 'red', rookAway)).toBe(true);
+  });
+});
+
+describe('迷雾 = 吃王棋 (rule F4, 2026-09-15)', () => {
+  beforeEach(() => {
+    resetVisionCache();
+  });
+
+  /**
+   * A fog game whose board has been overwritten with a hand-built position. The game object keeps the
+   * deal's fog flag, side and repetition map; the position itself is whatever the test wants.
+   */
+  function fogGameWith(seed: number): JieqiGame {
+    const game = JieqiGame.create({ mode: 'fog', seed });
+    for (let sq = 0; sq < SQUARES; sq++) game.board.squares[sq] = null;
+    return game;
+  }
+
+  it('送将 is legal: a move that leaves the general exposed is playable in fog', () => {
+    const game = fogGameWith(5);
+    const board = game.board;
+    // Kings face down the e-file with a red rook blocking; three more rooks make the line visible
+    // once the blocker steps off it — the exact position the F1 test above reads as a real facing.
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 0);
+    put(board, 'red', 'R', 4, 5);
+    put(board, 'red', 'R', 5, 7);
+    put(board, 'red', 'R', 5, 6);
+    put(board, 'red', 'R', 5, 5);
+    finalize(board);
+    const rookAway = mv(sq('4,5'), sq('3,5'));
+    // The old 送将 filter would refuse this; under F4 the general may be exposed — the game accepts
+    // the move and the player lives (or dies) with the cost.
+    expect(game.isLegal(rookAway)).toBe(true);
+    expect(game.isSelectable(rookAway)).toBe(true);
+    const event = game.apply(rookAway);
+    expect(event.move.from).toBe(sq('4,5'));
+  });
+
+  it('a general actually captured wins the game on the spot — no checkmate ceremony', () => {
+    const game = fogGameWith(6);
+    const board = game.board;
+    // Black's general sits in the open; a red rook has a clear file straight to it.
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 0);
+    put(board, 'red', 'R', 4, 5);
+    finalize(board);
+    const capture = mv(sq('4,5'), sq('4,0'));
+    expect(game.isLegal(capture)).toBe(true);
+    game.apply(capture);
+    expect(game.board.kingSq.black).toBe(-1);
+    expect(game.result).not.toBeNull();
+    expect(game.result?.winner).toBe('red');
+    expect(game.result?.text).toContain('被吃');
+  });
+
+  it('a checkmate-shaped position does not end the game — the general must fall, not be "mated"', () => {
+    const game = fogGameWith(8);
+    const board = game.board;
+    // Red's general cornered in its palace, three black rooks covering every escape: in standard
+    // xiangqi this is 将死. In fog the king may simply expose itself (送将合法), so play continues.
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 0);
+    put(board, 'black', 'R', 4, 1);
+    put(board, 'black', 'R', 3, 1);
+    put(board, 'black', 'R', 5, 1);
+    finalize(board);
+    expect(game.inCheck('red')).toBe(true);
+    expect(game.legalMoves('red').length).toBeGreaterThan(0);
+    expect(game.computeResult()).toBeNull();
+  });
+
+  it('the same position in a standard game is still 将死 — F4 changes fog, not xiangqi', () => {
+    const game = JieqiGame.create({ seed: 10 });
+    const board = game.board;
+    for (let sq = 0; sq < SQUARES; sq++) board.squares[sq] = null;
+    put(board, 'red', 'K', 4, 9);
+    put(board, 'black', 'K', 4, 0);
+    put(board, 'black', 'R', 4, 1);
+    put(board, 'black', 'R', 3, 1);
+    put(board, 'black', 'R', 5, 1);
+    finalize(board);
+    expect(game.inCheck('red')).toBe(true);
+    expect(game.legalMoves('red').length).toBe(0);
+    expect(game.computeResult()?.kind).toBe('checkmate');
+    expect(game.computeResult()?.winner).toBe('black');
   });
 });
 

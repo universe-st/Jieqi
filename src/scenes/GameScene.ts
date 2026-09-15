@@ -499,6 +499,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
+   * 迷雾: is the check on `side`'s general one the player can actually *see*?
+   *
+   * The gate is the checking piece, not the checked king: a general attacked by a piece hidden in the
+   * mist is a check the player cannot attribute, so it is not announced at all (rule F5, user
+   * 2026-09-15). At least one visible checker is enough to announce. Non-fog matches are always
+   * visible.
+   */
+  private isCheckVisible(side: Color): boolean {
+    if (!this.fogMode) return true;
+    const king = this.jieqi.board.kingSq[side];
+    if (king < 0) return false;
+    const enemy = side === 'red' ? 'black' : 'red';
+    for (const move of generateMoves(this.jieqi.board, enemy, [])) {
+      if (move.to === king && this.fogVisible.has(move.from)) return true;
+    }
+    return false;
+  }
+
+  /**
    * 吃子提示: reads the position and hands the board the marks to draw.
    *
    * Called after every change of position and whenever the checkbox moves. The two clauses of the hint
@@ -633,7 +652,9 @@ export class GameScene extends Phaser.Scene {
       this.legalForSelected = this.jieqi
         .legalMoves(this.player)
         .filter((move) => move.from === square);
-      this.sendsCheck = this.sendsCheckOf(square);
+      // 迷雾 = 吃王棋: 送将不是非法着法 (rule F4), so there is no red-X warning — the general may
+      // be exposed, and losing it is the price the player chooses.
+      this.sendsCheck = this.fogMode ? new Set() : this.sendsCheckOf(square);
       this.board.setSelection(square);
       this.board.setLegalTargets(
         this.legalForSelected.map((move) => ({
@@ -688,9 +709,8 @@ export class GameScene extends Phaser.Scene {
     this.board.setSendsCheck(this.sendsCheck);
     if (this.jieqi.result) return;
     if (this.jieqi.inCheck(this.jieqi.sideToMove)) {
-      // Same visibility gate as `announceCheck`: never report a check whose king the player cannot see.
-      const king = this.jieqi.board.kingSq[this.jieqi.sideToMove];
-      if (!this.fogMode || (king >= 0 && this.fogVisible.has(king))) {
+      // Same visibility gate as `announceCheck`: never report a check the player cannot see.
+      if (this.isCheckVisible(this.jieqi.sideToMove)) {
         this.vm.status.value = '被将军！';
         return;
       }
@@ -907,10 +927,10 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const kingSquare = this.jieqi.board.kingSq[side];
-    // 迷雾: a check only announces when the checked king is in the player's vision. The player's own
-    // king is always visible; the computer's is not — telling the player "黑方被将军" would hand them
-    // the computer king's position through the mist, which the mode must not do.
-    const visible = !this.fogMode || (kingSquare >= 0 && this.fogVisible.has(kingSquare));
+    // 迷雾 (rule F5): a check only announces when the player can see a checking piece. A general
+    // attacked by a piece hidden in the mist is a check the player cannot attribute, so neither the
+    // glow, the status nor the banner says anything — the fog keeps its own secrets.
+    const visible = this.isCheckVisible(side);
     this.board.setCheckSquare(visible && kingSquare >= 0 ? kingSquare : null);
     if (!visible) return;
     this.vm.status.value = `${side === 'red' ? '红方' : '黑方'}被将军！`;
@@ -1100,12 +1120,12 @@ export class GameScene extends Phaser.Scene {
       this.applyFog();
       this.board.reconcile(this.jieqi.board);
       this.board.setLastMove(null);
-      // Same visibility gate as `announceCheck`: no glow around a king the player cannot see.
+      // Same visibility gate as `announceCheck`: no glow around a check the player cannot see.
       const checked = this.jieqi.inCheck(this.jieqi.sideToMove)
         ? this.jieqi.board.kingSq[this.jieqi.sideToMove]
         : -1;
       this.board.setCheckSquare(
-        checked >= 0 && (!this.fogMode || this.fogVisible.has(checked)) ? checked : null,
+        checked >= 0 && this.isCheckVisible(this.jieqi.sideToMove) ? checked : null,
       );
       this.syncVm();
       this.vm.status.value = '已悔棋';

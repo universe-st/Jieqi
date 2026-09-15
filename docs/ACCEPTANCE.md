@@ -1000,4 +1000,21 @@ JIEQI_VERSION_CODE=18 ./build-android-release.sh
 
 下一版 versionCode 从 **19** 起。
 
+### 14.2 签名 release 包（1.5.2）— 迷雾吃王棋 + 柔雾回退
+
+```
+JIEQI_VERSION_CODE=19 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.5.2-release.apk`，**17,878,971 B** |
+| badging | `com.jieqi.game`、versionName **1.5.2**、versionCode **19**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（与 1.5.0 同一把密钥） |
+| 改动 | ① **F4 迷雾=吃王棋**（用户拍板「取消送将限制」）：`legalMoves` 在 fog 下返回伪合法着法（不做王安全过滤）；`computeResult` 在 fog 下只判「将帅被吃」（对方胜，文案含「被吃」）与「久无吃子判和」，将死/困毙不判负；搜索 `generateLegal`/`quiesce` 同跳过王过滤，`searchRoot`/`negamax` 吃将分支返回 `MATE`（第一次吃将即终局，不搜反吃）；场景 `sendsCheck` 迷雾下为空（红 X 与拦截消失）。② **F5 将军提示以「将军的棋」为门**（用户拍板）：`isCheckVisible` 扫敌方着法，凡终点=己方将帅格且起点在玩家视野内 → 看得见的将军才提示（高亮/状态栏/横幅）；`announceCheck`/`clearSelection`/`undo` 三处统一。③ **迷雾回退柔雾**（用户拍板「还是之前的样式就好，棋子隐藏就行」）：`drawFogTile` 回到 30 层 (1-t)²·2.4 渐变、瓦片 alpha 0.8↔0.96 呼吸；「棋子不画」保留（`reconcile` `setVisible(false)`） |
+| 门禁 | typecheck 0 错；`pnpm test` **121/121**（新增 F4 一组 4 例：送将合法可落子、吃将即胜含「被吃」文案、将死局面在 fog 不判负、同局面标准模式仍判将死；迷雾 3 局无卡死自对弈仍绿） |
+| 浏览器实测 | headless 实机跑通：`startGame('fog')` 后 mode=True、雾格 **39**（玩家黑方，90−51 可见）；截图确认**半透明柔雾**覆盖黑方半场、雾下棋子不显示（唯二可见顶行子为规则上合法的 (1,0)/(7,0) 车）；AI 落子后状态栏=「对方已落子（迷雾中，看不清具体走法）」；连续 5+ 手无卡死；`errors()` 全程 0。CDP daemon 反复崩断（环境问题），对局未跑到终局，吃将终局由单测覆盖 |
+| 包内核对 | `assets/www/assets/index-*.js`：对方已落子×1、将帅被吃×1、迷雾×N、1.5.2×1 |
+| 坚果云 | 已上传 `揭棋_20260915_v5.apk`（17,878,971 B，PROPFIND `getcontentlength` 与本地字节数一致） |
+
 
