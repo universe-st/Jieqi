@@ -849,10 +849,17 @@ export class GameScene extends Phaser.Scene {
     this.syncVm();
     if (!visible) {
       // The player saw nothing of the move — and in the worst case the whole visible board is
-      // unchanged, in which case this line is the *only* thing telling them the opponent played at
-      // all. Saying so out loud is therefore mandatory, not optional.
+      // unchanged, in which case this announcement is the *only* thing telling them the opponent
+      // played at all. Saying so out loud is therefore mandatory, not optional — and it is said as
+      // loudly as 将军 (user 1.5.2): banner + wash + cue sound, so a glance catches it even when the
+      // board shows no change at all.
       this.vm.status.value = '对方已落子（迷雾中，看不清具体走法）';
       this.board.setLastMove(event.move);
+      if (!this.jieqi.result) {
+        this.audio.play('place');
+        screenWash(this, C.fog, 0.14);
+        void banner(this, '对方已落子', '迷雾中 · 看不清具体走法', C.fog, { holdMs: 880 });
+      }
       this.announceCheck();
       return;
     }

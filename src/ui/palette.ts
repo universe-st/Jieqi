@@ -86,6 +86,8 @@ export const C = {
   lastMove: 0x9a7b4f,
   check: 0xd93b2b,
   danger: 0xc0392b,
+  /* 迷雾 — the mist blue the fog tiles are baked in; also the 对方已落子 announcement colour. */
+  fog: 0x93a8c2,
 
   /*
    * 吃子提示. Two colours with two meanings, and they are the opposite way round from what a chess

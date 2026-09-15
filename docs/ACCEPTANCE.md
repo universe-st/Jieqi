@@ -1017,4 +1017,25 @@ JIEQI_VERSION_CODE=19 ./build-android-release.sh
 | 包内核对 | `assets/www/assets/index-*.js`：对方已落子×1、将帅被吃×1、迷雾×N、1.5.2×1 |
 | 坚果云 | 已上传 `揭棋_20260915_v5.apk`（17,878,971 B，PROPFIND `getcontentlength` 与本地字节数一致） |
 
+下一版 versionCode 从 **20** 起。
+
+### 14.3 签名 release 包（1.5.3）—「对方已落子」升级为横幅
+
+```
+JIEQI_VERSION_CODE=20 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.5.3-release.apk`，**17,879,023 B** |
+| badging | `com.jieqi.game`、versionName **1.5.3**、versionCode **20**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（同一把密钥） |
+| 改动 | 迷雾中电脑落子的「对方已落子」从状态栏一行字升级为完整三件套：蓝灰牌匾横幅（`banner`，`C.fog` 0x93a8c2）+ 全屏淡蓝灰蒙层（`screenWash` 0.14）+ `place` 提示音；状态栏文字保留；`afterMove` 不可见分支加 `!jieqi.result` 守卫（终局前不打扰）；调色板新增 `C.fog`。玩家自己可见的着法不受影响（着法终点必在玩家视野内，走不到该分支） |
+| 门禁 | typecheck 0 错；`pnpm test` **121/121**（本轮纯 UI） |
+| 浏览器实测 | headless 实测：迷雾局 AI（黑）落子后截图确认——居中的蓝灰牌匾「对方已落子 / 迷雾中，看不清具体走法」+ 整屏淡蓝灰蒙层 + 状态栏同步；玩家先行着法无横幅；`errors()` 0 |
+| 包内核对 | `assets/www/assets/index-*.js`：对方已落子×1、迷雾中×1、1.5.3×1 |
+| 坚果云 | 已上传 `揭棋_20260915_v6.apk`（17,879,023 B，PROPFIND `getcontentlength` 与本地字节数一致） |
+
+下一版 versionCode 从 **21** 起。
+
 
