@@ -28,7 +28,7 @@ export const DEFAULT_DIFFICULTY: Difficulty = 'normal';
 export const DEFAULT_MODE: GameMode = 'standard';
 
 export function isGameMode(value: unknown): value is GameMode {
-  return value === 'standard' || value === 'mixed';
+  return value === 'standard' || value === 'mixed' || value === 'fog';
 }
 
 /**

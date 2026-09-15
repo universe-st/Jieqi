@@ -36,10 +36,12 @@
 
 import type { Board } from '../core/board';
 import { sampleWorld, sampleWorldMixed } from '../core/info';
+import { generateMoves, isKingSafeAfter } from '../core/moves';
 import { toChineseNotation } from '../core/notation';
 import type { JieqiGame } from '../core/rules';
 import { createRng, randomSeed, type Rng } from '../core/rng';
-import { type Color, type Identity, type Kind, type Move, sameMove } from '../core/types';
+import { SQUARES, type Color, type Identity, type Kind, type Move, other, sameMove } from '../core/types';
+import { foggedBoardFor, isSquareSeen, visibleSquares } from '../core/vision';
 import { Searcher } from './search';
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -204,7 +206,10 @@ function prepare(game: JieqiGame, options: AiOptions): SearchPlan | null {
   const preset = DIFFICULTY[options.difficulty ?? 'normal'];
   const settings: DifficultyPreset = { ...preset, ...stripUndefined(options) };
   const color = game.sideToMove;
-  const moves = game.selectableMoves(color);
+  // 迷雾 mode: the root list is what the AI can *attempt* on its fogged view — every move its own
+  // pieces could make if the unseen enemy pieces were not there. Playing one that reality blocks is
+  // handled by the scene's retry loop, which walks the candidates until the real board accepts one.
+  const moves = game.mode === 'fog' ? fogCandidates(game, color) : game.selectableMoves(color);
   if (moves.length === 0) return null;
   return { game, color, moves, settings, rng: createRng(options.seed ?? randomSeed()) };
 }
@@ -218,8 +223,10 @@ function prepare(game: JieqiGame, options: AiOptions): SearchPlan | null {
 function* searchWorlds(plan: SearchPlan): Generator<number, AiDecision, void> {
   const { game, color, moves, settings, rng } = plan;
   const startedAt = Date.now();
-  const working: Board = game.board.clone();
+  const fog = game.mode === 'fog' ? buildFogPlan(game, color) : null;
+  const working: Board = fog ? fog.base.clone() : game.board.clone();
   const scratch: Kind[] = [];
+  const scratchSquares: number[] = [];
   const mixedScratch: Identity[] = [];
   const searcher = new Searcher({
     maxDepth: settings.depth,
@@ -242,16 +249,26 @@ function* searchWorlds(plan: SearchPlan): Generator<number, AiDecision, void> {
     // colour are both unknown, so a world decides whose piece it is as well as what it is. That is
     // what puts the real cost of moving a 暗子 into the search's average — in some worlds it walks
     // over to the enemy the moment it is turned over (rule M4).
-    if (game.mode === 'mixed') {
-      sampleWorldMixed(working, game.mixedPoolFor(color), rng, mixedScratch);
+    //
+    // 迷雾 samples *positions* too: the enemy pieces the AI cannot see are placed on sampled fogged
+    // squares with sampled identities, so every world is a complete position with the full material
+    // accounted for, and the price of a move is averaged over where the hidden army might be.
+    let world: Board;
+    if (fog) {
+      world = sampleFogWorld(fog, rng, scratch, scratchSquares);
     } else {
-      sampleWorld(working, game.poolsFor(color), rng, scratch);
+      world = working;
+      if (game.mode === 'mixed') {
+        sampleWorldMixed(world, game.mixedPoolFor(color), rng, mixedScratch);
+      } else {
+        sampleWorld(world, game.poolsFor(color), rng, scratch);
+      }
+      world.side = color;
+      world.rehash();
     }
-    working.side = color;
-    working.rehash();
 
     searcher.beginWorld();
-    const scores = searcher.scoreWorld(working, color, moves, order, settings.depth);
+    const scores = searcher.scoreWorld(world, color, moves, order, settings.depth);
 
     // A world cut short by the budget reports placeholder scores for its unsearched moves; folding
     // those into the average would drag good moves down. Keep a partial first world, drop later ones.
@@ -319,6 +336,151 @@ function* searchWorlds(plan: SearchPlan): Generator<number, AiDecision, void> {
     })),
     reason,
   };
+}
+
+/** One enemy piece the AI cannot see: it exists (or is suspected to) but its square is unknown. */
+interface UnseenPiece {
+  readonly id: number;
+  readonly color: Color;
+  /** `null` while the piece is still face down — its identity is sampled like any other 暗子's. */
+  readonly kind: Kind | null;
+  readonly homeKind: Kind;
+  readonly hidden: boolean;
+}
+
+/**
+ * Everything the fogged search needs, computed once per decision: the fogged geometry (enemy pieces
+ * the AI cannot see removed), the list of those pieces, and the pools their identities draw from.
+ */
+interface FogPlan {
+  /** The real board — the source of the AI's vision. */
+  readonly real: Board;
+  readonly color: Color;
+  /** Fogged geometry: the real board minus every unseen enemy piece. */
+  readonly base: Board;
+  /** The enemy pieces to re-place, each with its true colour and (if revealed) identity. */
+  readonly unseen: UnseenPiece[];
+  readonly ownPool: Kind[];
+  readonly enemyPool: Kind[];
+}
+
+/**
+ * The moves the AI can *attempt* in 迷雾 mode: generated on its fogged view, so a square it cannot
+ * see is never known to be a capture — it is just a place it could try to go. Legality is judged on
+ * the fogged view the same way the player's moves are judged on the real one, and the 禁止循环追棋
+ * guard is read off the real game.
+ */
+export function fogCandidates(game: JieqiGame, color: Color): Move[] {
+  const view = foggedBoardFor(game.board, color);
+  const pseudo = generateMoves(view, color, []);
+  const out: Move[] = [];
+  for (const move of pseudo) {
+    if (!isKingSafeAfter(view, color, move)) continue;
+    if (game.wouldRepeat(move)) continue;
+    out.push(move);
+  }
+  return out;
+}
+
+function buildFogPlan(game: JieqiGame, color: Color): FogPlan {
+  const real = game.board;
+  const seen = visibleSquares(real, color);
+  const unseen: UnseenPiece[] = [];
+  for (let sq = 0; sq < SQUARES; sq++) {
+    const piece = real.at(sq);
+    if (!piece || piece.kind === 'K') continue;
+    if (real.ownerAt(sq) !== other(color)) continue;
+    if (seen.has(sq)) continue;
+    unseen.push({
+      id: piece.id,
+      color: piece.color,
+      kind: piece.hidden ? null : piece.kind,
+      homeKind: piece.homeKind,
+      hidden: piece.hidden,
+    });
+  }
+  const pools = game.poolsFor(color);
+  return {
+    real,
+    color,
+    base: foggedBoardFor(real, color),
+    unseen,
+    ownPool: pools[color],
+    enemyPool: pools[other(color)],
+  };
+}
+
+/** Samples the identities of `color`'s face-down pieces from `pool`, without replacement. */
+function assignHiddenKinds(board: Board, color: Color, pool: Kind[], rng: Rng, scratch: Kind[]): void {
+  const squares = board.hiddenSquares(color);
+  if (squares.length === 0) return;
+  scratch.length = 0;
+  for (const kind of pool) scratch.push(kind);
+  rng.shuffle(scratch);
+  for (let i = 0; i < squares.length; i++) {
+    const square = squares[i];
+    const kind = scratch[i];
+    if (square === undefined || kind === undefined) continue;
+    const piece = board.at(square);
+    if (piece) board.squares[square] = { ...piece, kind };
+  }
+}
+
+/**
+ * One concrete world for the fogged search: the fogged geometry, every visible 暗子's identity
+ * sampled from its pool, and the unseen enemy pieces placed on *sampled* fogged squares with sampled
+ * identities. Each world is a complete position the ordinary search can play out; what differs
+ * between worlds is where the hidden enemy army actually is, so the price of a move is averaged over
+ * the enemy's possible deployments instead of being read off one lucky guess.
+ */
+function sampleFogWorld(plan: FogPlan, rng: Rng, scratch: Kind[], scratchSquares: number[]): Board {
+  const world = plan.base.clone();
+  const enemy = other(plan.color);
+
+  // The AI's own 暗子: all visible, identities from its own pool.
+  assignHiddenKinds(world, plan.color, plan.ownPool, rng, scratch);
+
+  // The enemy's 暗子: the visible ones keep their real squares; the unseen ones are placed below.
+  // One shuffle serves both, so a kind is never dealt twice.
+  scratch.length = 0;
+  for (const kind of plan.enemyPool) scratch.push(kind);
+  rng.shuffle(scratch);
+  const visibleHidden = world.hiddenSquares(enemy);
+  let index = 0;
+  for (const sq of visibleHidden) {
+    const piece = world.at(sq);
+    const kind = scratch[index++];
+    if (piece && kind !== undefined) world.squares[sq] = { ...piece, kind };
+  }
+
+  // The squares the hidden army might occupy: fogged, and empty in the AI's picture of the board.
+  scratchSquares.length = 0;
+  for (let sq = 0; sq < SQUARES; sq++) {
+    if (isSquareSeen(plan.real, plan.color, sq)) continue;
+    if (plan.base.at(sq)) continue;
+    scratchSquares.push(sq);
+  }
+  rng.shuffle(scratchSquares);
+
+  let hiddenIndex = 0;
+  for (let i = 0; i < plan.unseen.length; i++) {
+    const entry = plan.unseen[i];
+    const slot = scratchSquares[i];
+    if (entry === undefined || slot === undefined) continue;
+    const kind = entry.kind ?? scratch[index + hiddenIndex++];
+    if (kind === undefined) continue;
+    world.squares[slot] = {
+      id: entry.id,
+      color: entry.color,
+      kind,
+      homeKind: entry.homeKind,
+      hidden: entry.hidden,
+    };
+  }
+
+  world.side = plan.color;
+  world.rehash();
+  return world;
 }
 
 /** Orders root indices by their running average, best first — this is what makes the pruning pay off. */

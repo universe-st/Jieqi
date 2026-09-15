@@ -962,4 +962,23 @@ JIEQI_VERSION_CODE=16 ./build-android-release.sh
 - **§13.3 的三条读数只在本机 Chrome（桌面窗口 640×960）上取过**：Android WebView 里的触摸路径没有复跑
   （框架侧的触摸与鼠标走同一个 `onPointerFocus`，但那是推断，不是实测）。
 
+### 14.0 签名 release 包（1.5.0）— 迷雾玩法
+
+```
+JIEQI_VERSION_CODE=17 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.5.0-release.apk`，**17,878,599 B** |
+| badging | `com.jieqi.game`、versionName **1.5.0**、versionCode **17**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（与 1.2.1–1.4.3 同一把密钥） |
+| 改动 | 新增第三种玩法「迷雾玩法」（用户拍板）：视野 = 自身格 + 周围八格 + 一步可达格（V1–V2，炮能看到隔山打的目标但看不到炮架）；暗子按格位算视野、翻开按真身（V3）；将帅碰头需连线全在受检方视野内（F1），迷雾驱散导致照面可直接飞将吃将获胜（F2）；吃子提示/送将/落点危险/将军提示全部按玩家视野门控，不提示看不到的信息；迷雾中的电脑行棋不进棋谱、状态只报「电脑在迷雾中行棋…」；AI 同样受视野限制——候选着法在 AI 视野棋盘生成、被真盘拒绝就顺延次优步、采样世界把看不见的敌子重摆到采样迷雾格（唯一例外：敌方将帅位置恒已知）。实现：`src/core/vision.ts`（视野 + Zobrist-key 全局缓存 + `foggedBoardFor`）、`moves.ts` `kingsFaceEachOtherFog` + 飞将吃将、`ai/engine.ts` `fogCandidates`/`sampleFogWorld`、`BoardView` 迷雾层（90 格瓦片 + 飘动雾团）、`GameScene` 可见性门控；`backdoor.ts` 版本同步 1.5.0 并新增 `fog()`/`log()` 探针 |
+| 门禁 | typecheck 0 错；`pnpm test` **114/114**（新增 `test/vision.test.ts` 17 例：视野规则、迷雾照面、飞将吃将、迷雾 AI 候选与 3 局无卡死自对弈） |
+| 浏览器实测 | `pnpm dev` 真机驱动：迷雾局开局即 37–49 格迷雾、截图确认灰蓝迷雾覆盖黑方半场；迷雾中电脑首步状态=「电脑在迷雾中行棋…」且棋谱只显示玩家可见的着法（ply 2 → 1 行）；吃子提示的标记全部落在玩家可见格（0 泄漏）；悔棋回退到 ply 0 且迷雾同步；认输后迷雾全消（tiles 0）；标准玩法 0 迷雾格；玩法对话框含 `mode_fog` 且真鼠标点击后按迷雾模式开局；全程 `errors()` 为 0 |
+| 包内核对 | `assets/www/assets/index-Nm6rdqsu.js`：迷雾玩法×1、标准玩法 + 视野×1、电脑在迷雾中行棋×1、被迷雾覆盖×1、迷雾挡住将帅碰头×1、1.5.0×1 |
+| 坚果云 | 已上传 `揭棋_20260915_v3.apk`（17,878,599 B，PROPFIND `getcontentlength` 与本地字节数一致；同日 v1=1.4.2、v2=1.4.3） |
+
+下一版 versionCode 从 **18** 起。
+
 

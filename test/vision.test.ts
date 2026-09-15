@@ -1,0 +1,307 @@
+/**
+ * 迷雾 mode tests — the vision rule (V1–V3), the fogged 将帅碰头 (F1/F2), and the fogged board the
+ * search reasons over.
+ *
+ * The vision functions are pure, so most tests are "build a board, ask what one side can see, read
+ * the set". The facing tests are where the rule's sharp edge lives: a clear file the checked side
+ * cannot see is *not* a facing, and a facing the checked side *can* see is a flying capture.
+ */
+
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { fogCandidates, chooseMove } from '../src/ai/engine';
+import { generateMoves, isKingSafe, isKingSafeAfter, kingsFaceEachOtherFog } from '../src/core/moves';
+import { JieqiGame } from '../src/core/rules';
+import { foggedBoardFor, resetVisionCache, visibleSquares } from '../src/core/vision';
+import type { Board } from '../src/core/board';
+import type { Piece, Move } from '../src/core/types';
+import { emptyBoard, finalize, fromAscii, put, putHidden } from './support/position';
+
+const sq = (name: string): number => {
+  const [x, y] = name.split(',').map((part) => Number(part));
+  return (y as number) * 9 + (x as number);
+};
+const squareName = (s: number): string => `${s % 9},${(s / 9) | 0}`;
+const names = (board: Board, color: 'red' | 'black'): string[] =>
+  [...visibleSquares(board, color)].map(squareName).sort();
+
+/** The quiet two-king backdrop used across the vision diagrams. */
+const QUIET = `
+  . . . k . . . . .
+  . . . . . . . . .
+  . . . . . . . . .
+  . . . . . . . . .
+  . . . . . . . . .
+  . . . . . . . . .
+  . . . . . . . . .
+  . . . . . . . . .
+  . . . . . . . . .
+  . . . . K . . . .
+`;
+
+describe('视野 (vision)', () => {
+  beforeEach(() => {
+    resetVisionCache();
+  });
+
+  it('a side always sees its own pieces, even one standing alone in enemy country', () => {
+    const board = fromAscii(QUIET);
+    // A red pawn alone deep in black's back ranks, far from every other red piece.
+    put(board, 'red', 'P', 4, 0);
+    finalize(board);
+    const seen = visibleSquares(board, 'red');
+    expect(seen.has(sq('4,0'))).toBe(true);
+  });
+
+  it('a piece sees the eight surrounding squares, at the edge clamped to the board', () => {
+    const board = fromAscii(QUIET);
+    // A pawn has no long rays, so the neighbour ring is the whole of its peripheral vision.
+    put(board, 'red', 'P', 0, 5);
+    finalize(board);
+    const seen = names(board, 'red');
+    for (const expected of ['0,4', '1,4', '0,5', '1,5', '0,6', '1,6']) {
+      expect(seen).toContain(expected);
+    }
+    expect(seen).not.toContain('8,5');
+  });
+
+  it('a rook sees along its rays to the first blocker, and the blocker itself', () => {
+    const board = fromAscii(QUIET);
+    put(board, 'red', 'R', 4, 4);
+    // A black pawn on the same file stops the ray; the square beyond it is not visible.
+    put(board, 'black', 'P', 4, 6);
+    finalize(board);
+    const seen = visibleSquares(board, 'red');
+    for (const expected of ['4,3', '4,5', '4,6']) expect(seen.has(sq(expected))).toBe(true);
+    expect(seen.has(sq('4,7'))).toBe(false);
+  });
+
+  it('a cannon sees past its screen to the piece beyond, but not the screen itself', () => {
+    const board = fromAscii(QUIET);
+    put(board, 'red', 'C', 4, 4);
+    // A black rook screens the file; the black pawn behind it is the capture target.
+    put(board, 'black', 'R', 4, 6);
+    put(board, 'black', 'P', 4, 8);
+    finalize(board);
+    const seen = visibleSquares(board, 'red');
+    // The empty squares up to the screen.
+    expect(seen.has(sq('4,3'))).toBe(true);
+    expect(seen.has(sq('4,5'))).toBe(true);
+    // The far-side pawn is visible (it can be captured over the screen)…
+    expect(seen.has(sq('4,8'))).toBe(true);
+    // …but the screen itself is not a destination, so this ray does not reveal it.
+    expect(seen.has(sq('4,6'))).toBe(false);
+  });
+
+  it('a hidden piece sees with the vision of the square it stands on (rule V3)', () => {
+    const board = fromAscii(QUIET);
+    // A hidden piece whose true identity is a rook, but which sits on a pawn square and so moves —
+    // and sees — as a pawn: forward one, sideways once it has crossed the river.
+    putHidden(board, 'red', 'R', 'P', 4, 3);
+    finalize(board);
+    const seen = visibleSquares(board, 'red');
+    // The pawn's forward step is in vision…
+    expect(seen.has(sq('4,2'))).toBe(true);
+    // …but the rook's long rays are not: a real rook here would see (4,7) down its file, the hidden
+    // pawn does not. (The red king at (4,9) sees (4,8) regardless, which is why the assertion uses
+    // (4,7) instead of the king's own doorstep.)
+    expect(seen.has(sq('4,7'))).toBe(false);
+  });
+
+  it('once revealed, a piece sees as its true identity', () => {
+    const board = fromAscii(QUIET);
+    putHidden(board, 'red', 'R', 'P', 4, 3);
+    const at = board.at(sq('4,3')) as Piece;
+    board.squares[sq('4,3')] = { ...at, hidden: false };
+    finalize(board);
+    const seen = visibleSquares(board, 'red');
+    expect(seen.has(sq('4,0'))).toBe(true);
+    expect(seen.has(sq('4,8'))).toBe(true);
+  });
+
+  it('a horse cannot see past its own leg', () => {
+    const board = fromAscii(QUIET);
+    put(board, 'red', 'H', 4, 4);
+    // A black pawn sits one step up, blocking the horse's two forward jumps.
+    put(board, 'black', 'P', 4, 3);
+    finalize(board);
+    const seen = visibleSquares(board, 'red');
+    expect(seen.has(sq('5,2'))).toBe(false);
+    expect(seen.has(sq('3,2'))).toBe(false);
+    // The unblocked backward jumps still show.
+    expect(seen.has(sq('5,6'))).toBe(true);
+  });
+
+  it('the fogged board keeps what the player can see and drops what they cannot', () => {
+    const board = fromAscii(QUIET);
+    // Red's rook at the bottom of the a-file; black's rook on the same file, in its ray.
+    put(board, 'red', 'R', 0, 9);
+    put(board, 'black', 'R', 0, 2);
+    // A black pawn far away, in no red piece's vision.
+    put(board, 'black', 'P', 8, 1);
+    finalize(board);
+    const view = foggedBoardFor(board, 'red');
+    expect(view.at(sq('0,2'))).not.toBeNull();
+    expect(view.at(sq('8,1'))).toBeNull();
+    // The black king is deliberately kept even when unseen — a search without a target king cannot mate.
+    expect(view.kingSq.black).toBe(board.kingSq.black);
+  });
+});
+
+describe('将帅碰头 in fog (F1/F2)', () => {
+  beforeEach(() => {
+    resetVisionCache();
+  });
+
+  function facingBoard(redY: number, blackY: number): Board {
+    const board = emptyBoard('red');
+    board.fog = true;
+    put(board, 'red', 'K', 4, redY);
+    put(board, 'black', 'K', 4, blackY);
+    return finalize(board);
+  }
+
+  it('a file swallowed by fog is not a facing, even with nothing between the kings', () => {
+    const board = facingBoard(9, 0);
+    // Red has no piece that sees the middle of the file: the kings physically face, but the fog
+    // keeps the line invisible, so no flying general exists and neither king is in check from it.
+    expect(kingsFaceEachOtherFog(board, 'red')).toBe(false);
+    expect(kingsFaceEachOtherFog(board, 'black')).toBe(false);
+    expect(isKingSafe(board, 'red')).toBe(true);
+    expect(isKingSafe(board, 'black')).toBe(true);
+  });
+
+  it('a clear file the checked side can see is a real facing — and only for that side', () => {
+    const board = facingBoard(9, 5);
+    // Red sees every square of the short line: the king's own neighbour (4,8), a rook at (5,7)
+    // looking across to (4,7), and a rook at (5,6) looking across to (4,6).
+    put(board, 'red', 'R', 5, 7);
+    put(board, 'red', 'R', 5, 6);
+    finalize(board);
+    expect(kingsFaceEachOtherFog(board, 'red')).toBe(true);
+    // Black's king sees only its own doorstep of the line — the fog holds the rest — so black does
+    // not face anything it can answer.
+    expect(kingsFaceEachOtherFog(board, 'black')).toBe(false);
+    expect(isKingSafe(board, 'red')).toBe(false);
+    expect(isKingSafe(board, 'black')).toBe(true);
+  });
+
+  it('the king gains a flying capture of the enemy king along a visible, clear file', () => {
+    const board = facingBoard(9, 4);
+    put(board, 'red', 'R', 5, 7);
+    put(board, 'red', 'R', 5, 6);
+    put(board, 'red', 'R', 5, 5);
+    finalize(board);
+    expect(kingsFaceEachOtherFog(board, 'red')).toBe(true);
+    const moves = generateMoves(board, 'red', []);
+    expect(moves.some((m) => m.from === sq('4,9') && m.to === sq('4,4'))).toBe(true);
+  });
+
+  it('taking the enemy king by the flying capture removes it from the board (rule F2 victory)', () => {
+    const board = facingBoard(9, 4);
+    put(board, 'red', 'R', 5, 7);
+    put(board, 'red', 'R', 5, 6);
+    put(board, 'red', 'R', 5, 5);
+    finalize(board);
+    const capture = { from: sq('4,9'), to: sq('4,4') };
+    expect(isKingSafeAfter(board, 'red', capture)).toBe(true);
+    board.makeMove(capture.from, capture.to);
+    expect(board.kingSq.black).toBe(-1);
+    expect(isKingSafe(board, 'black')).toBe(false);
+  });
+
+  it('moving into a facing the mover can see is illegal — it leaves the king exposed', () => {
+    const board = facingBoard(9, 4);
+    // The blocker: a red rook on the file between the kings.
+    put(board, 'red', 'R', 4, 5);
+    // After the blocker leaves the file, red sees the whole line (king's neighbour + three rooks).
+    put(board, 'red', 'R', 5, 7);
+    put(board, 'red', 'R', 5, 6);
+    put(board, 'red', 'R', 5, 5);
+    finalize(board);
+    const rookAway = { from: sq('4,5'), to: sq('3,5') };
+    // The file (4,5)…(4,8) is clear and fully visible to red once the rook steps off it: the move
+    // leaves the red general facing, and the ordinary 送将 filter refuses it.
+    expect(isKingSafeAfter(board, 'red', rookAway)).toBe(false);
+  });
+
+  it('moving into a facing only the mover cannot see stays legal — the fog hides the cost', () => {
+    const board = facingBoard(9, 0);
+    // The blocker, and nothing that would see the line after it leaves: red's king sees only (4,8)
+    // of the long file, the rook at (3,5) sees only (4,5). The rest stays mist.
+    put(board, 'red', 'R', 4, 5);
+    finalize(board);
+    const rookAway = { from: sq('4,5'), to: sq('3,5') };
+    expect(kingsFaceEachOtherFog(board, 'red')).toBe(false);
+    expect(isKingSafeAfter(board, 'red', rookAway)).toBe(true);
+  });
+});
+
+describe('迷雾 AI (fogged candidates and worlds)', () => {
+  beforeEach(() => {
+    resetVisionCache();
+  });
+
+  it('the fogged view never offers the AI a capture aimed into the mist', () => {
+    const board = fromAscii(QUIET);
+    board.fog = true;
+    // Black's rook on the a-file, a red pawn in its ray (visible: first blocker), and a red pawn
+    // behind it that the ray cannot reach — and no black piece's vision touches it either.
+    put(board, 'black', 'R', 0, 2);
+    put(board, 'red', 'P', 0, 5);
+    put(board, 'red', 'P', 0, 7);
+    finalize(board);
+    const view = foggedBoardFor(board, 'black');
+    // The unseen pawn is gone from the picture…
+    expect(view.at(sq('0,7'))).toBeNull();
+    // …and the move list built on that picture contains no move aimed at its square.
+    const moves = generateMoves(view, 'black', []);
+    expect(moves.some((m) => m.to === sq('0,7'))).toBe(false);
+    expect(moves.some((m) => m.to === sq('0,5'))).toBe(true);
+  });
+
+  it('chooseMove runs on a fog deal and returns a decision', () => {
+    const game = JieqiGame.create({ mode: 'fog', seed: 7 });
+    expect(game.mode).toBe('fog');
+    expect(game.board.fog).toBe(true);
+    const candidates = fogCandidates(game, 'red');
+    expect(candidates.length).toBeGreaterThan(0);
+    const decision = chooseMove(game, { difficulty: 'easy', seed: 3 });
+    expect(decision).not.toBeNull();
+    if (decision) {
+      expect(candidates.some((c) => c.from === decision.move.from && c.to === decision.move.to)).toBe(true);
+    }
+  });
+
+  it('fog self-play never wedges: the scene retry loop always finds a real-legal move', () => {
+    // The scene's 迷雾 retry walks the scored candidates until the real board accepts one, falling
+    // back to the real move list. This reproduces that loop for whole games: a fog decision is legal
+    // on the AI's *view*, which reality may contradict, so the loop — not `chooseMove` — is what has
+    // to keep the game moving. The property under test is that a live side always finds a playable
+    // move; how long a game runs is the AI's business, not a wedge.
+    for (const seed of [11, 22, 33]) {
+      const game = JieqiGame.create({ mode: 'fog', seed });
+      let plies = 0;
+      while (!game.result && plies < 300) {
+        const decision = chooseMove(game, { difficulty: 'easy', seed: seed * 1000 + plies });
+        let chosen: Move | null = decision?.move ?? null;
+        if (chosen && !game.isSelectable(chosen)) {
+          chosen =
+            decision?.candidates.find((candidate) => game.isSelectable(candidate.move))?.move ??
+            game.selectableMoves()[0] ??
+            null;
+        }
+        // A genuinely dead side may have nothing (and `computeResult` will say so); a live side must
+        // always find something, or the game would sit on an unanswered turn.
+        if (!chosen) {
+          expect(game.selectableMoves().length).toBe(0);
+          game.computeResult();
+          break;
+        }
+        game.apply(chosen);
+        plies += 1;
+      }
+      if (!game.result) expect(plies).toBe(300); // hit the cap, not wedged — the loop kept advancing
+    }
+  });
+});

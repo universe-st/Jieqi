@@ -28,20 +28,22 @@ import { MODE_NAME, type GameMode } from '../core/types';
 import { DIFFICULTY_LABEL } from '../vm/GameViewModel';
 import { DIFFICULTIES } from '../vm/prefs';
 
-/** The two ways to play, in the order the dialog lists them. */
-export const MODES: readonly GameMode[] = ['standard', 'mixed'];
+/** The ways to play, in the order the dialog lists them. */
+export const MODES: readonly GameMode[] = ['standard', 'mixed', 'fog'];
 
 /**
  * One line per mode, under its button.
  *
- * Written for someone who has played 揭棋 before and has never seen 混斗: the first says what does *not*
- * change (you only ever turn over your own pieces), the second is the whole rule in one sentence —
- * whose piece a 暗子 is comes down to which half it stands on, and the coin can land on the opponent's
- * face.
+ * Written for someone who has played 揭棋 before and has never seen 混斗 or 迷雾: the first says what
+ * does *not* change (you only ever turn over your own pieces), the second is the whole rule in one
+ * sentence — whose piece a 暗子 is comes down to which half it stands on, and the coin can land on the
+ * opponent's face — and the third is the vision/fog rule: you see what your pieces see, and a file
+ * swallowed by fog is not a 将帅碰头.
  */
 export const MODE_HINT: Readonly<Record<GameMode, string>> = {
   standard: '双方各执十五枚暗子：翻开的永远是自己人，暗子只知道格位、不知道身份。',
   mixed: '红黑三十枚棋子混洗后背面朝上：己方半场的暗子暂时归你，翻开若是敌方棋子，该子当场易主。',
+  fog: '标准玩法 + 视野：只能看到己方棋子能看见的格子，其余被迷雾覆盖；迷雾挡住将帅碰头。',
 };
 
 /**

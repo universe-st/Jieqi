@@ -81,10 +81,16 @@ export class BoardView {
   private readonly dangerLayer: Phaser.GameObjects.Container;
   private readonly targetLayer: Phaser.GameObjects.Container;
   private readonly pieceLayer: Phaser.GameObjects.Container;
+  private readonly fogLayer: Phaser.GameObjects.Container;
   private readonly checkGlow: Phaser.GameObjects.Image;
   private readonly pieces = new Map<number, PieceView>();
   private readonly targets: Phaser.GameObjects.Image[] = [];
   private readonly dangerMarks: Phaser.GameObjects.Image[] = [];
+  /** One fog tile per square, `null` while the square is in view. */
+  private readonly fogTiles: (Phaser.GameObjects.Image | null)[] = new Array(SQUARES).fill(null);
+  /** The drifting mist wisps — the "particle" half of 迷雾. */
+  private readonly fogParticles: Phaser.GameObjects.Image[] = [];
+  private fogEnabled = false;
 
   /**
    * Whether the board is drawn from black's side.
@@ -147,6 +153,10 @@ export class BoardView {
     this.dangerLayer = scene.add.container(0, 0, []);
     this.targetLayer = scene.add.container(0, 0, []);
     this.pieceLayer = scene.add.container(0, 0, []);
+    // 迷雾 sits *above* every board element — pieces, marks, rings, glows — because its job is to hide
+    // them. Only the hit rectangle stays on top, so a fogged square is still tappable: the player may
+    // move blind into the mist, and the engine resolves the tap against the truth.
+    this.fogLayer = scene.add.container(0, 0, []);
 
     const hit = scene.add
       .rectangle(BOARD_WIDTH / 2, BOARD_HEIGHT / 2, BOARD_WIDTH, BOARD_HEIGHT, 0x000000, 0)
@@ -167,6 +177,7 @@ export class BoardView {
       this.dangerLayer,
       this.targetLayer,
       this.pieceLayer,
+      this.fogLayer,
       hit,
     ]);
   }
@@ -585,6 +596,163 @@ export class BoardView {
   /** How many danger marks are on the board right now — the acceptance run's reading. */
   get dangerMarkCount(): number {
     return this.dangerMarks.length / 2;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // 迷雾 (fog of war)
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * 迷雾: show a fog tile on every square outside `visible`, and clear them everywhere else.
+   *
+   * `null` switches the fog off entirely — the mode the board uses in 标准/混斗 and at the end of a
+   * match, when the reveal turns the whole board up. Called by the scene after every position change;
+   * tiles and wisps fade rather than pop so a move's new vision reads as the mist rolling back.
+   */
+  setFog(visible: ReadonlySet<number> | null): void {
+    this.fogEnabled = visible !== null;
+    for (let sq = 0; sq < SQUARES; sq++) {
+      const show = this.fogEnabled && !(visible as ReadonlySet<number>).has(sq);
+      this.setFogTile(sq, show);
+    }
+    if (this.fogEnabled) {
+      this.sweepFogParticles(visible as ReadonlySet<number>);
+    } else {
+      this.clearFogLayer();
+    }
+  }
+
+  /** How many squares are fogged right now — the acceptance run's reading of the picture. */
+  get fogTileCount(): number {
+    let count = 0;
+    for (const tile of this.fogTiles) if (tile) count += 1;
+    return count;
+  }
+
+  private setFogTile(square: number, show: boolean): void {
+    let tile = this.fogTiles[square];
+    if (!show) {
+      if (tile) {
+        const fading = tile;
+        this.scene.tweens.killTweensOf(fading);
+        this.scene.tweens.add({
+          targets: fading,
+          alpha: 0,
+          duration: 280,
+          onComplete: () => {
+            fading.destroy();
+            if (this.fogTiles[square] === fading) this.fogTiles[square] = null;
+          },
+        });
+        this.fogTiles[square] = null;
+      }
+      return;
+    }
+    if (tile) return;
+    const local = this.local(square);
+    tile = this.scene.add
+      .image(local.x, local.y, TEX.fog)
+      .setOrigin(0.5)
+      .setDisplaySize(CELL * 1.08, CELL * 1.08)
+      .setAlpha(0);
+    this.fogLayer.add(tile);
+    this.fogTiles[square] = tile;
+    // A square's mist settles in, then breathes slowly on its own phase so the fog never reads as a
+    // grid of identical patches pulsing in lockstep.
+    const phase = ((square * 137) % 2200) + 300;
+    this.scene.tweens.add({
+      targets: tile,
+      alpha: 0.9,
+      duration: 320,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        this.scene.tweens.add({
+          targets: tile,
+          alpha: { from: 0.8, to: 0.96 },
+          duration: 1700 + phase,
+          delay: phase,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      },
+    });
+  }
+
+  /**
+   * The mist wisps: a handful of soft blobs that wander from fogged square to fogged square. Called
+   * after every position change; any wisp the new vision has caught out in the open dissolves and
+   * re-mists somewhere still hidden.
+   */
+  private sweepFogParticles(visible: ReadonlySet<number>): void {
+    while (this.fogParticles.length < 10) {
+      const wisp = this.scene.add
+        .image(0, 0, TEX.mist)
+        .setOrigin(0.5)
+        .setDisplaySize(CELL * 0.95, CELL * 0.95)
+        .setAlpha(0);
+      this.fogLayer.add(wisp);
+      this.fogParticles.push(wisp);
+      this.driftWisp(wisp, visible, 0);
+    }
+    for (const wisp of this.fogParticles) {
+      const at = localToSquare(wisp.x, wisp.y);
+      if (at === null || visible.has(at)) this.driftWisp(wisp, visible, 0);
+    }
+  }
+
+  /** Starts (or restarts) one wisp: fade in over a random fogged square, then wander. */
+  private driftWisp(wisp: Phaser.GameObjects.Image, visible: ReadonlySet<number>, delay: number): void {
+    const fogged: number[] = [];
+    for (let sq = 0; sq < SQUARES; sq++) if (!visible.has(sq)) fogged.push(sq);
+    if (fogged.length === 0) {
+      wisp.setAlpha(0);
+      return;
+    }
+    this.scene.tweens.killTweensOf(wisp);
+    const pick = fogged[Math.floor(Math.random() * fogged.length)] as number;
+    const local = this.local(pick);
+    wisp.setPosition(local.x, local.y);
+    this.scene.tweens.add({
+      targets: wisp,
+      alpha: 0.3 + Math.random() * 0.35,
+      duration: 380,
+      delay,
+    });
+    const wander = (): void => {
+      // A wisp that was destroyed (fog cleared, scene left) must not start a new drift on nothing.
+      if (!wisp.active) return;
+      const target = fogged[Math.floor(Math.random() * fogged.length)] as number;
+      const at = this.local(target);
+      this.scene.tweens.add({
+        targets: wisp,
+        x: at.x,
+        y: at.y,
+        alpha: 0.12 + Math.random() * 0.4,
+        duration: 2400 + Math.random() * 2400,
+        ease: 'Sine.easeInOut',
+        onComplete: wander,
+      });
+    };
+    this.scene.time.delayedCall(delay + 380, wander);
+  }
+
+  /** Removes every fog tile and wisp — the end of a match, or a board in a non-fog mode. */
+  private clearFogLayer(): void {
+    for (let sq = 0; sq < SQUARES; sq++) {
+      const tile = this.fogTiles[sq];
+      if (tile) {
+        this.scene.tweens.killTweensOf(tile);
+        tile.destroy();
+      }
+      this.fogTiles[sq] = null;
+    }
+    for (const wisp of this.fogParticles) {
+      this.scene.tweens.killTweensOf(wisp);
+      wisp.destroy();
+    }
+    this.fogParticles.length = 0;
+    this.fogEnabled = false;
   }
 
   /** Highlights the general that is currently in check, or clears it. */

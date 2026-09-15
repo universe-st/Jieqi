@@ -36,6 +36,9 @@ export const TEX = {
   petalRed: 'petal-red',
   petalGold: 'petal-gold',
   chipBack: 'chip-back',
+  /** 迷雾: one soft-edged tile per fogged square, plus a smaller drifting wisp for the particle effect. */
+  fog: 'fog',
+  mist: 'mist',
 } as const;
 
 /** Bake size of the edge strip; the spin scales it to whatever the piece's diameter is. */
@@ -211,6 +214,42 @@ function drawPetal(g: Phaser.GameObjects.Graphics, color: number): void {
 }
 
 /**
+ * 迷雾 mode: one soft-edged tile per fogged square.
+ *
+ * The falloff is square, not round, so a tile owns its whole square and four neighbours blend at the
+ * corners instead of leaving a cross-shaped gap. The centre is fully opaque (a tile must hide a piece
+ * standing on its square); only the rim fades, so adjacent tiles read as one continuous mist.
+ */
+function drawFogTile(g: Phaser.GameObjects.Graphics, size: number): void {
+  const half = size / 2;
+  const steps = 30;
+  for (let i = steps; i > 0; i--) {
+    const t = i / steps;
+    const s = half * t * 1.04; // a hair oversized, so tiles overlap instead of showing seams
+    const alpha = (1 - t) * (1 - t) * 2.4;
+    g.fillStyle(0x93a8c2, alpha);
+    g.fillRect(half - s, half - s, s * 2, s * 2);
+  }
+}
+
+/**
+ * 迷雾 mode: the drifting wisp that makes the fog read as weather rather than paint.
+ *
+ * A small soft blob at low alpha; the board layer wanders it between fogged squares and lets it
+ * dissolve whenever a move's new vision catches it in the open.
+ */
+function drawMist(g: Phaser.GameObjects.Graphics, size: number): void {
+  const centre = size / 2;
+  const steps = 20;
+  for (let i = steps; i > 0; i--) {
+    const t = i / steps;
+    const alpha = (1 - t) * (1 - t) * 2.0;
+    g.fillStyle(0xaebdd0, alpha);
+    g.fillCircle(centre, centre, centre * t);
+  }
+}
+
+/**
  * Draws a chip into a plain 2D context, fully opaque.
  *
  * The chips are the one thing drawn on a canvas rather than through `Graphics`, because they need two
@@ -372,6 +411,10 @@ export function buildTextures(scene: Phaser.Scene): void {
   bake(TEX.ring, 64, 64, drawRing);
   bake(TEX.petalRed, 18, 12, (g) => drawPetal(g, C.cinnabar));
   bake(TEX.petalGold, 18, 12, (g) => drawPetal(g, C.goldBright));
+  // 迷雾: the tile is set to an explicit display size per square, the wisp is scaled by its drift
+  // tween — both get the dense bake so the mist stays smooth on a high-density screen.
+  bake(TEX.fog, 64, 64, (g) => drawFogTile(g, 64), true);
+  bake(TEX.mist, 24, 24, (g) => drawMist(g, 24), true);
 
   bakeChips(scene);
 }

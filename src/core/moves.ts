@@ -31,11 +31,13 @@ import {
   inPalace,
   movementOf,
   onBoard,
+  other,
   ownHalf,
   rankOf,
   squareOf,
 } from './types';
 import type { Board } from './board';
+import { isSquareSeen } from './vision';
 
 const ORTHO: readonly (readonly [number, number])[] = [
   [0, -1],
@@ -105,6 +107,14 @@ export function generatePieceMoves(board: Board, from: number, out: Move[]): voi
         if (!onBoard(tx, ty)) continue;
         if (!inPalace(color, squareOf(tx, ty))) continue;
         addTarget(board, from, tx, ty, color, out);
+      }
+      // 迷雾 mode (rule F2): a king facing the enemy king along a clear, *visible* file may take it —
+      // the flying general. The enemy king leaves the board the moment the move is played, so the
+      // position is safe; `isKingSafeAfter` is what keeps the move legal exactly when the file was
+      // visible to the mover, which is the whole rule.
+      if (board.fog && kingsFaceEachOtherFog(board, color)) {
+        const foe = board.kingSq[other(color)];
+        if (foe >= 0) out.push({ from, to: foe });
       }
       return;
     }
@@ -358,6 +368,31 @@ export function kingsFaceEachOther(board: Board): boolean {
 }
 
 /**
+ * 迷雾 mode's 将帅碰头 (rule F1): the kings face along a file that is clear *and every square of
+ * which `color` can see*.
+ *
+ * The line of sight is the whole point of the rule's fog carve-out: a file swallowed by fog puts no
+ * flying general on the board, so the checked side is not obliged to answer one — the position is
+ * simply not a facing until the fog lifts and the line reads through. `color` is the side whose king
+ * would be on the receiving end of the flying attack, which is also the side the rule demands *can
+ * see* the attack: you cannot be checked by something you cannot see.
+ */
+export function kingsFaceEachOtherFog(board: Board, color: Color): boolean {
+  const red = board.kingSq.red;
+  const black = board.kingSq.black;
+  if (red < 0 || black < 0) return false;
+  const x = fileOf(red);
+  if (x !== fileOf(black)) return false;
+  const lo = Math.min(rankOf(red), rankOf(black));
+  const hi = Math.max(rankOf(red), rankOf(black));
+  for (let y = lo + 1; y < hi; y++) {
+    const at = squareOf(x, y);
+    if (board.at(at) || !isSquareSeen(board, color, at)) return false;
+  }
+  return true;
+}
+
+/**
  * Is `color`'s king un-attacked right now? This is the single predicate move legality is built on, so
  * it has to cover both ways a king can be taken: an ordinary attack, and the kings facing each other.
  *
@@ -374,6 +409,9 @@ export function isKingSafe(board: Board, color: Color): boolean {
   const standing = board.at(king);
   if (!standing || standing.kind !== 'K' || standing.color !== color) return false;
   if (isSquareAttacked(board, king, color === 'red' ? 'black' : 'red')) return false;
+  // 迷雾 mode re-reads the facing rule through the fog: the kings face only along a file the checked
+  // side can see, so a fogged file is simply not a check.
+  if (board.fog) return !kingsFaceEachOtherFog(board, color);
   return !kingsFaceEachOther(board);
 }
 

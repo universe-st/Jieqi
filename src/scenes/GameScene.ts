@@ -31,6 +31,7 @@ import {
 
 import { DIFFICULTY, analyse, chooseMoveAsync, type Difficulty, type ScoredMove } from '../ai';
 import { audioDirector, type AudioDirector } from '../audio/AudioDirector';
+import type { Board } from '../core/board';
 import { hangingSquares, landsHangingAs } from '../core/danger';
 import { generateMoves, isKingSafeAfter, isSquareAttacked } from '../core/moves';
 import { JieqiGame, type MoveEvent } from '../core/rules';
@@ -43,6 +44,7 @@ import {
   type Move,
   KIND_NAME,
 } from '../core/types';
+import { foggedBoardFor, visibleSquares } from '../core/vision';
 import { BoardView, type BoardCue, type DangerMark } from '../ui/BoardView';
 import { openDifficultyDialog, openVolumeDialog } from '../ui/dialogs';
 import { banner, petalFall, screenWash, withTimeout } from '../ui/fx';
@@ -80,6 +82,18 @@ export class GameScene extends Phaser.Scene {
   private aiNonce = 0;
   /** `this.time.now` of the last refusal banner (禁止循环追棋 / 禁止立即吃将 / 送将), so a run of taps does not stack them. */
   private lastRefusalAt = -Infinity;
+  /**
+   * 迷雾: the player's vision on the current position, or an empty set outside fog mode.
+   *
+   * Refreshed by {@link applyFog} the moment a position changes, so the status line, the move log
+   * and the check announcements can all ask "could the player see this?" without recomputing.
+   */
+  private fogVisible: ReadonlySet<number> = new Set();
+  /**
+   * 迷雾: whether each ply's move was visible to the player when it was played. The move log shows
+   * only what the player actually saw, so an AI move played in fog leaves no trace in the log.
+   */
+  private visiblePlies: boolean[] = [];
 
   constructor() {
     super('game');
@@ -100,6 +114,8 @@ export class GameScene extends Phaser.Scene {
     this.sendsCheck = new Set();
     this.aiNonce = 0;
     this.lastRefusalAt = -Infinity;
+    this.visiblePlies = [];
+    this.fogVisible = new Set();
   }
 
   /** Queues the soundtrack. The board art needs no loading — it is baked from code in `create()`. */
@@ -427,11 +443,15 @@ export class GameScene extends Phaser.Scene {
       this.selected = null;
       this.legalForSelected = [];
       this.sendsCheck = new Set();
+      this.visiblePlies = [];
+      this.fogVisible = new Set();
       this.board.clearHighlights();
       this.vm.reset();
       this.syncVm();
       await withTimeout(this.board.deal(this.jieqi.board), 3000);
       this.board.reconcile(this.jieqi.board);
+      // The opening mist is the first thing the player sees: it draws with the pieces.
+      this.applyFog();
     } finally {
       this.leave();
     }
@@ -439,12 +459,52 @@ export class GameScene extends Phaser.Scene {
     this.refreshDanger();
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // 迷雾 (fog of war)
+  // ---------------------------------------------------------------------------------------------
+
+  /** True while this match is 迷雾. The board flag and the mode agree by construction. */
+  private get fogMode(): boolean {
+    return this.jieqi.mode === 'fog';
+  }
+
+  /**
+   * Rolls the mist to the current position's truth: recompute the player's vision and hand it to the
+   * board. Called the moment a position changes — *before* the move animation, so a piece arriving
+   * on a newly visible square lands in the clear — and once at the end of a match with `null`, which
+   * lifts the fog for the full reveal.
+   */
+  private applyFog(): void {
+    if (!this.fogMode) {
+      this.board.setFog(null);
+      return;
+    }
+    this.fogVisible = visibleSquares(this.jieqi.board, this.player);
+    this.board.setFog(this.fogVisible);
+  }
+
+  /**
+   * 吃子提示/送将/落点危险 are all judged on the player's *view* in 迷雾 mode: an enemy piece the
+   * player cannot see is not a threat they should be warned about, and marking a piece as capturable
+   * because of a hidden attacker would be exactly the "提示玩家看不到的信息" the mode forbids. The
+   * fogged board — the real board minus every enemy piece outside the player's vision — is that view.
+   */
+  private dangerBoard(): Board {
+    return this.fogMode ? foggedBoardFor(this.jieqi.board, this.player) : this.jieqi.board;
+  }
+
+  /** The squares the player can see right now — the acceptance run reads this. */
+  visibleSquaresNow(): number[] {
+    return [...visibleSquares(this.jieqi.board, this.player)];
+  }
+
   /**
    * 吃子提示: reads the position and hands the board the marks to draw.
    *
    * Called after every change of position and whenever the checkbox moves. The two clauses of the hint
    * live in `src/core/danger.ts` where they are unit-tested; this only decides *whose* pieces are whose
-   * on screen, which is a question about the player and the computer, not about 红 and 黑.
+   * on screen, which is a question about the player and the computer, not about 红 and 黑. In 迷雾 the
+   * reading is over the player's fogged view (see {@link dangerBoard}).
    *
    * Marks are cleared the moment the position is disturbed (see {@link clearDanger}), so a glow can
    * never survive the piece that earned it.
@@ -454,9 +514,10 @@ export class GameScene extends Phaser.Scene {
       this.board.setDangerMarks([]);
       return;
     }
+    const board = this.dangerBoard();
     const marks: DangerMark[] = [
-      ...hangingSquares(this.jieqi.board, this.player).map((square) => ({ square, tone: 'own' as const })),
-      ...hangingSquares(this.jieqi.board, this.ai).map((square) => ({ square, tone: 'foe' as const })),
+      ...hangingSquares(board, this.player).map((square) => ({ square, tone: 'own' as const })),
+      ...hangingSquares(board, this.ai).map((square) => ({ square, tone: 'foe' as const })),
     ];
     this.board.setDangerMarks(marks);
   }
@@ -469,12 +530,24 @@ export class GameScene extends Phaser.Scene {
   private syncVm(): void {
     const vm = this.vm;
     vm.turn.value = this.jieqi.sideToMove;
-    vm.moves.value = this.jieqi.moveEvents.map((event, index) => ({
-      key: `${index}-${event.move.from}-${event.move.to}`,
-      index: index + 1,
-      color: event.color,
-      notation: event.notation,
-    }));
+    // The move log is the record of what the player actually *saw*, so in 迷雾 an AI move played in
+    // fog (invisible to the player) leaves no row. The row index stays the true ply number, so a log
+    // that skips a ply reads as "one move happened out of sight", which is exactly what happened.
+    vm.moves.value = this.jieqi.moveEvents
+      .map((event, index) => {
+        const visible = !this.fogMode || (this.visiblePlies[index] ?? true);
+        return {
+          visible,
+          row: {
+            key: `${index}-${event.move.from}-${event.move.to}`,
+            index: index + 1,
+            color: event.color,
+            notation: event.notation,
+          },
+        };
+      })
+      .filter((entry) => entry.visible)
+      .map((entry) => entry.row);
     // 标准 fills a tray by the *colour of the pieces in it* (only the enemy's can be taken); 混斗 fills
     // it by *who did the taking*, because a red piece can end up in red's own tray there. Either way
     // the two trays are the two sides of the board.
@@ -546,6 +619,12 @@ export class GameScene extends Phaser.Scene {
       this.refuseCheckGiveaway();
       return;
     }
+    // 迷雾: a tap into the mist must not drop the piece. The player cannot see whether a fogged
+    // square is a target — that is the whole point of the fog — so probing one that is not should
+    // leave the selection standing instead of silently undoing it, or every wrong guess would cost a
+    // re-select. (A fogged square can never hold the player's own piece: a side always sees what it
+    // controls, so the guard below cannot skip a legitimate pick-up.)
+    if (this.fogMode && this.selected !== null && !this.fogVisible.has(square)) return;
     // Ownership, not `piece.color`: in 混斗 a 暗子 on the player's half is theirs to pick up whoever it
     // turns out to be (rule M2) — and the engine would refuse the move anyway, which would read as a
     // dead piece rather than as the mode working.
@@ -559,7 +638,9 @@ export class GameScene extends Phaser.Scene {
       this.board.setLegalTargets(
         this.legalForSelected.map((move) => ({
           square: move.to,
-          danger: landsHangingAs(this.jieqi.board, move, this.player),
+          // 迷雾 judges the landing on the player's view: a red ring must not whisper "an enemy you
+          // cannot see attacks this square".
+          danger: landsHangingAs(this.dangerBoard(), move, this.player),
         })),
       );
       this.board.setSendsCheck(this.sendsCheck);
@@ -570,12 +651,17 @@ export class GameScene extends Phaser.Scene {
         : KIND_NAME[piece.color][piece.kind];
       // Targets that 禁止循环追棋 or 禁止立即吃将 forbid are offered like any other — tapping one is how
       // the player finds out, and refusing by name beats hiding a square and leaving them to wonder why
-      // it is not there — but the count says up front that some of them are not available.
-      const forbidden = this.legalForSelected.filter((move) => this.jieqi.wouldRepeat(move)).length;
-      const eatGen = this.legalForSelected.filter((move) => this.jieqi.wouldEatGeneral(move)).length;
+      // it is not there — but the count says up front that some of them are not available. In 迷雾 the
+      // count is over the targets the player can actually see: "可走 N 处" must never leak where the
+      // hidden pieces stand by reporting a rook's true range through the mist.
+      const offered = this.fogMode
+        ? this.legalForSelected.filter((move) => this.fogVisible.has(move.to))
+        : this.legalForSelected;
+      const forbidden = offered.filter((move) => this.jieqi.wouldRepeat(move)).length;
+      const eatGen = offered.filter((move) => this.jieqi.wouldEatGeneral(move)).length;
       const repeatNote = forbidden > 0 ? `，其中 ${forbidden} 处禁止循环追棋` : '';
       const eatNote = eatGen > 0 ? `，其中 ${eatGen} 处禁止立即吃将` : '';
-      this.vm.status.value = `${piece.hidden ? '暗' : ''}${label} · 可走 ${this.legalForSelected.length} 处${repeatNote}${eatNote}`;
+      this.vm.status.value = `${piece.hidden ? '暗' : ''}${label} · 可走 ${offered.length} 处${repeatNote}${eatNote}`;
       this.audio.play('pick');
       return;
     }
@@ -602,8 +688,12 @@ export class GameScene extends Phaser.Scene {
     this.board.setSendsCheck(this.sendsCheck);
     if (this.jieqi.result) return;
     if (this.jieqi.inCheck(this.jieqi.sideToMove)) {
-      this.vm.status.value = '被将军！';
-      return;
+      // Same visibility gate as `announceCheck`: never report a check whose king the player cannot see.
+      const king = this.jieqi.board.kingSq[this.jieqi.sideToMove];
+      if (!this.fogMode || (king >= 0 && this.fogVisible.has(king))) {
+        this.vm.status.value = '被将军！';
+        return;
+      }
     }
     this.vm.status.value =
       this.jieqi.sideToMove === this.player
@@ -613,7 +703,9 @@ export class GameScene extends Phaser.Scene {
 
   /** The squares a move of the piece on `square` could reach but must not: it would expose the general. */
   private sendsCheckOf(square: number): ReadonlySet<number> {
-    const board = this.jieqi.board;
+    // 迷雾 judges on the player's view (see {@link dangerBoard}): a red X must not leak that an
+    // unseen enemy piece stands between the move and the general's safety.
+    const board = this.dangerBoard();
     const out = new Set<number>();
     for (const move of generateMoves(board, this.player, [])) {
       if (move.from !== square) continue;
@@ -646,6 +738,9 @@ export class GameScene extends Phaser.Scene {
       this.clearDanger();
       this.clearSelection();
       const event = this.jieqi.apply(move);
+      // Roll the mist to the new position *before* the animation: a piece arriving on a square the
+      // new vision reveals lands in the clear, and one moving into fog is swallowed as it travels.
+      this.applyFog();
       await withTimeout(this.board.playMove(this.jieqi.board, event));
       this.afterMove(event);
       if (await this.finishIfOver()) return;
@@ -653,6 +748,7 @@ export class GameScene extends Phaser.Scene {
     } catch (error) {
       // A dropped move must never wedge the game: reconcile and let the player try again.
       this.board.reconcile(this.jieqi.board);
+      this.applyFog();
       this.vm.status.value = byPlayer ? '这一步走不了，请另选一步' : '对手走子异常';
       throw error;
     } finally {
@@ -724,7 +820,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   private afterMove(event: MoveEvent): void {
+    // 迷雾: a move played where the player cannot see it — the to-square is outside their vision —
+    // is announced with one neutral line and nothing else. No notation (it would name the square the
+    // piece went to), no 翻出X (the flip happened in the mist), no capture name; the log row is
+    // suppressed by the same flag in `syncVm`.
+    const visible = !this.fogMode || this.fogVisible.has(event.move.to);
+    this.visiblePlies.push(visible);
     this.syncVm();
+    if (!visible) {
+      this.vm.status.value = '电脑在迷雾中行棋…';
+      this.board.setLastMove(event.move);
+      this.announceCheck();
+      return;
+    }
     const parts: string[] = [`${event.color === 'red' ? '红' : '黑'} ${event.notation}`];
     if (event.wasHidden && event.revealedKind) {
       // The face is named by what the piece *is*, not by who moved it: 混斗 can turn a mover's 暗兵
@@ -796,7 +904,12 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const kingSquare = this.jieqi.board.kingSq[side];
-    this.board.setCheckSquare(kingSquare >= 0 ? kingSquare : null);
+    // 迷雾: a check only announces when the checked king is in the player's vision. The player's own
+    // king is always visible; the computer's is not — telling the player "黑方被将军" would hand them
+    // the computer king's position through the mist, which the mode must not do.
+    const visible = !this.fogMode || (kingSquare >= 0 && this.fogVisible.has(kingSquare));
+    this.board.setCheckSquare(visible && kingSquare >= 0 ? kingSquare : null);
+    if (!visible) return;
     this.vm.status.value = `${side === 'red' ? '红方' : '黑方'}被将军！`;
     this.audio.play('check');
     screenWash(this, C.check, 0.18);
@@ -835,8 +948,10 @@ export class GameScene extends Phaser.Scene {
     );
     // 对局结束，棋盘不再是秘密。Deliberately *after* the banner rather than under it: the reveal is the
     // second beat of the ending — the result first, then what was actually on the board all along. The
-    // status line says so, because dimmed pieces with no explanation read as a rendering fault.
+    // status line says so, because dimmed pieces with no explanation read as a rendering fault. In 迷雾
+    // the fog lifts in the same breath: the whole board — every piece, every flip — becomes the record.
     this.board.revealHidden(this.jieqi.board);
+    this.board.setFog(null);
     this.vm.status.value = `${result.text} · 所有暗子已翻开`;
     return true;
   }
@@ -856,14 +971,32 @@ export class GameScene extends Phaser.Scene {
           this.vm.thinkingProgress.value = total === 0 ? 1 : done / total;
         },
       );
-      // `null`, or a move the rules would refuse: either way the computer has nothing to play that is
-      // allowed, which is a dead position rather than a move to force through.
-      if (!decision || !this.jieqi.isSelectable(decision.move)) {
+      // `null` means the AI's fogged view offers nothing at all — a dead position rather than a move
+      // to force through.
+      if (!decision) {
         this.jieqi.computeResult();
         await this.finishIfOver();
         return;
       }
-      const event = this.jieqi.apply(decision.move);
+      // 迷雾: the decision is legal on the AI's *fogged* view, but the real board may refuse it — an
+      // unseen piece blocks the path, or the real position checks the AI in a way it cannot see. Walk
+      // the scored candidates until the real board accepts one; only if none do, fall back to the real
+      // move list, and only then treat the position as dead. A blocked probe is a wasted turn, never a
+      // loss the AI did not know it was taking.
+      let chosen: Move | null = decision.move;
+      if (!this.jieqi.isSelectable(chosen)) {
+        chosen =
+          decision.candidates.find((candidate) => this.jieqi.isSelectable(candidate.move))?.move ??
+          this.jieqi.selectableMoves()[0] ??
+          null;
+      }
+      if (!chosen || !this.jieqi.isSelectable(chosen)) {
+        this.jieqi.computeResult();
+        await this.finishIfOver();
+        return;
+      }
+      const event = this.jieqi.apply(chosen);
+      this.applyFog();
       await withTimeout(this.board.playMove(this.jieqi.board, event));
       this.afterMove(event);
       await this.finishIfOver();
@@ -955,12 +1088,19 @@ export class GameScene extends Phaser.Scene {
       for (let i = 0; i < steps; i++) {
         const event = this.jieqi.undo();
         if (!event) break;
+        // Each undone ply forfeits its visibility record, so the log agrees with the replayed board.
+        this.visiblePlies.pop();
         await withTimeout(this.board.playUndo(this.jieqi.board, event));
       }
       this.board.reconcile(this.jieqi.board);
+      this.applyFog();
       this.board.setLastMove(null);
+      // Same visibility gate as `announceCheck`: no glow around a king the player cannot see.
+      const checked = this.jieqi.inCheck(this.jieqi.sideToMove)
+        ? this.jieqi.board.kingSq[this.jieqi.sideToMove]
+        : -1;
       this.board.setCheckSquare(
-        this.jieqi.inCheck(this.jieqi.sideToMove) ? this.jieqi.board.kingSq[this.jieqi.sideToMove] : null,
+        checked >= 0 && (!this.fogMode || this.fogVisible.has(checked)) ? checked : null,
       );
       this.syncVm();
       this.vm.status.value = '已悔棋';
@@ -986,7 +1126,11 @@ export class GameScene extends Phaser.Scene {
         seed: randomSeed(),
         nodeBudget: 90_000,
       });
-      const best = candidates[0];
+      // 迷雾: never suggest a move whose destination the player cannot see — the notation would name
+      // the very square the mist is hiding.
+      const best = this.fogMode
+        ? candidates.find((candidate) => this.fogVisible.has(candidate.move.to))
+        : candidates[0];
       if (!best) return [];
       this.board.setSelection(best.move.from);
       this.board.setLegalTargets([{ square: best.move.to }]);
@@ -1104,10 +1248,21 @@ export class GameScene extends Phaser.Scene {
    * be compared.
    */
   dangerSquares(): { own: number[]; foe: number[] } {
+    const board = this.dangerBoard();
     return {
-      own: hangingSquares(this.jieqi.board, this.player),
-      foe: hangingSquares(this.jieqi.board, this.ai),
+      own: hangingSquares(board, this.player),
+      foe: hangingSquares(board, this.ai),
     };
+  }
+
+  /** 迷雾 state the acceptance backdoor reads: how many squares the board is actually fogging. */
+  get fogTileCount(): number {
+    return this.board.fogTileCount;
+  }
+
+  /** True while this match is 迷雾. */
+  get isFogMode(): boolean {
+    return this.jieqi.mode === 'fog';
   }
 
   /** How many rings the board is actually drawing right now. */

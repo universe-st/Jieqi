@@ -173,6 +173,7 @@ export class JieqiGame {
     const mode = options.mode ?? 'standard';
     const rng = createRng(seed);
     // 混斗 deals both armies out of one pool (rule M1); 标准 keeps each army on its own half (rule R3).
+    // 迷雾 deals exactly like 标准 — the fog is an information overlay, not a different deal.
     const board =
       mode === 'mixed'
         ? Board.dealMixed(rng.shuffle(mixedArmy()))
@@ -180,6 +181,7 @@ export class JieqiGame {
             red: rng.shuffle([...ARMY_LIST]),
             black: rng.shuffle([...ARMY_LIST]),
           });
+    board.fog = mode === 'fog';
     return new JieqiGame(board, createKnowledge(), seed, options.idlePlies ?? 80, mode);
   }
 

@@ -18,15 +18,21 @@ export type Color = 'red' | 'black';
  *   starting squares in one pool, so the piece under a 暗子 may belong to either side. While it is
  *   face down it counts as the property of the half it stands on (rule M2), which is what lets its
  *   owner-of-the-moment move it; turning it over hands it to whoever it really is (rule M4).
+ * - `fog` — 迷雾: standard 揭棋 (each side turns over its own pieces) plus a vision/fog overlay
+ *   (rules V1–V3) and the flying-general exception (rule F2). The deal and the movement rules are
+ *   exactly 标准's; what changes is that a player only sees the squares their pieces can see, and
+ *   that 将帅碰头 is only real along a *visible* file. The fog is a display-and-information rule, not
+ *   a new way to deal the board, which is why it is its own mode rather than a flag on 混斗.
  *
  * Nothing else differs: the kings, the movement of a hidden piece, check, 困毙, 禁止循环追棋 and the
- * draw are all the same in both modes.
+ * draw are all the same in the first two modes, and 迷雾 inherits every one of 标准's rules too.
  */
-export type GameMode = 'standard' | 'mixed';
+export type GameMode = 'standard' | 'mixed' | 'fog';
 
 export const MODE_NAME: Readonly<Record<GameMode, string>> = {
   standard: '标准玩法',
   mixed: '混斗玩法',
+  fog: '迷雾玩法',
 };
 
 /**

@@ -206,8 +206,16 @@ export interface Backdoor {
    * `forbidden` is the evidence for the rule: those moves are in `legal()` and are refused when played.
    */
   repetition(): { allowed: string[]; forbidden: string[] };
+  /** The move log as rendered — the rows the player sees, so in 迷雾 invisible AI moves are absent. */
+  log(): { index: number; notation: string }[];
   /** Plays the game out to a terminal state and returns what happened. */
   autoPlay(maxPlies?: number, difficulty?: Difficulty): Promise<{ plies: number; result: BackdoorState['result'] }>;
+  /**
+   * 迷雾: the picture's own answer — how many squares the board is fogging, which ones the player
+   * can see, and whether this match is fog at all. `visible` is what the mist is *not* covering, so a
+   * run can assert that a piece it knows is hidden stays out of the player's view.
+   */
+  fog(): { tiles: number; visible: string[]; mode: boolean };
   settle(ms?: number): Promise<boolean>;
   settled(): boolean;
   /** Runtime errors seen since load. The acceptance criterion is that this stays empty. */
@@ -282,13 +290,22 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
   const view = (): string[] => {
     const board = match()?.board;
     if (!board) return [];
+    // 迷雾: the player-visible picture hides everything outside the player's vision — a piece the
+    // player cannot see reads as fog, not as a face-down piece (which would itself be information).
+    const s = gameScene();
+    const visible = s && s.isFogMode ? new Set(s.visibleSquaresNow()) : null;
     const rows: string[] = [];
     for (let y = 0; y < 10; y++) {
       let row = '';
       for (let x = 0; x < 9; x++) {
-        const piece = board.at(y * 9 + x);
+        const sq = y * 9 + x;
+        const piece = board.at(sq);
         if (!piece) {
           row += ' . ';
+          continue;
+        }
+        if (visible && !visible.has(sq)) {
+          row += ' ≈ ';
           continue;
         }
         // A face-down piece is rendered as a question mark even though the engine knows what it is:
@@ -363,7 +380,7 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
   };
 
   const api: Backdoor = {
-    version: '1.4.3',
+    version: '1.5.0',
 
     screen,
 
@@ -646,6 +663,10 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
       return scene().repetitionProbe();
     },
 
+    log() {
+      return scene().vm.moves.value.map((row) => ({ index: row.index, notation: row.notation }));
+    },
+
     async autoPlay(maxPlies = 300, difficulty: Difficulty = 'easy') {
       // Resolved once, up front: self-play never crosses a scene boundary, and re-resolving it every
       // ply only adds a way for a mid-game screen change to throw in the middle of a loop.
@@ -659,6 +680,15 @@ export function installBackdoor(game: Phaser.Game): Backdoor {
         plies += 1;
       }
       return { plies, result: api.state().result };
+    },
+
+    fog() {
+      const s = scene();
+      return {
+        tiles: s.fogTileCount,
+        visible: s.visibleSquaresNow().map(label),
+        mode: s.isFogMode,
+      };
     },
 
     async settle(ms = 10000) {

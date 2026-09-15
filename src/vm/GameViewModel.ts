@@ -66,7 +66,9 @@ export class GameViewModel {
   readonly difficultyLabel = computed(() => DIFFICULTY_LABEL[this.difficulty.value]);
   readonly modeLabel = computed(() => MODE_NAME[this.mode.value]);
   /** Shown beside the title only when it is worth saying — a 标准 board says nothing. */
-  readonly modeBadge = computed(() => (this.mode.value === 'mixed' ? MODE_NAME.mixed : ''));
+  readonly modeBadge = computed(() =>
+    this.mode.value === 'mixed' || this.mode.value === 'fog' ? MODE_NAME[this.mode.value] : '',
+  );
   readonly turnLabel = computed(() => (this.turn.value === 'red' ? '红方行棋' : '黑方行棋'));
   /** Who the two panels are about. Colour-dependent, because the player's colour is drawn, not fixed. */
   readonly playerName = computed(() => `你 · ${COLOR_NAME[this.player.value]}`);

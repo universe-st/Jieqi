@@ -104,6 +104,19 @@ export class Board {
    */
   mixed = false;
 
+  /**
+   * 迷雾 mode (rules V1–V3, F2): while this is set, the board's rules treat 将帅碰头 as only real
+   * along a file every square of which the checked side can *see* (`kingsFaceEachOtherFog`), and the
+   * king gains the flying capture of an enemy king it faces along such a file.
+   *
+   * Vision itself (`visibleSquares`) does not read this flag — a player's view is the union of their
+   * pieces' visions, which is a pure function of the position in every mode — but the *rules* that
+   * depend on fog being in play do, which is why it lives here beside `mixed`: the board is the one
+   * object the search clones, so a fog flag that rode on the game instead would go missing inside a
+   * sampled world.
+   */
+  fog = false;
+
   static empty(): Board {
     return new Board();
   }
@@ -199,6 +212,7 @@ export class Board {
     copy.h1 = this.h1;
     copy.h2 = this.h2;
     copy.mixed = this.mixed;
+    copy.fog = this.fog;
     return copy;
   }
 
