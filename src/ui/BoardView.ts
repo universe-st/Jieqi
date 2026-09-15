@@ -279,6 +279,10 @@ export class BoardView {
       if (!piece) continue;
       const view = this.spawn(board, piece.id, sq);
       if (!piece.hidden) view.showFace(piece.kind);
+      // 迷雾: a piece dealt onto a square outside the player's vision is never shown — not even while
+      // it drops in. The fog must own that square from the first frame, or the opening deal and the
+      // computer's first move would leak what the mist is supposed to keep.
+      if (this.fogVisible !== null && !this.fogVisible.has(sq)) view.setVisible(false);
       const local = this.local(sq);
       const fromY = local.y > BOARD_HEIGHT / 2 ? BOARD_HEIGHT + 90 : -90;
       jobs.push(view.dropIn(local.x, local.y, index * 26, fromY));
@@ -450,13 +454,26 @@ export class BoardView {
       // The engine still calls an unplayed piece `hidden` after the match is over; the board does not.
       const dimmed = this.over && piece.hidden;
       // 迷雾: a piece standing on a fogged square is not rendered at all — hiding it by covering is
-      // not enough, the view itself must not draw it (belt-and-suspenders on top of the opaque tile).
+      // not enough, the view itself must not draw it (the mist tiles are translucent; the hiding is
+      // what actually keeps the secret).
       const fogged = this.fogVisible !== null && !this.fogVisible.has(sq);
-      view
-        .setScale(1)
-        .setAlpha(dimmed ? REVEALED_ALPHA : 1)
-        .setAngle(0)
-        .setVisible(!fogged);
+      // A piece stepping out of the mist fades in instead of popping into existence (user 1.5.4).
+      // `view.visible` reflects the previous reconcile's fog verdict, so a hidden view that now stands
+      // on a visible square is exactly "came out of the fog". The endgame reveal (fogVisible === null)
+      // is excluded — it has its own full-board reveal animation.
+      const emerging = this.fogVisible !== null && !fogged && !view.visible;
+      view.setScale(1).setAngle(0);
+      if (emerging) {
+        view.setVisible(true).setAlpha(0);
+        this.scene.tweens.add({
+          targets: view,
+          alpha: dimmed ? REVEALED_ALPHA : 1,
+          duration: 380,
+          ease: 'Quad.easeOut',
+        });
+      } else {
+        view.setAlpha(dimmed ? REVEALED_ALPHA : 1).setVisible(!fogged);
+      }
       if (piece.hidden) {
         if (dimmed) view.showRevealed(piece.kind);
         else view.showHidden();

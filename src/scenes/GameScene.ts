@@ -448,10 +448,13 @@ export class GameScene extends Phaser.Scene {
       this.board.clearHighlights();
       this.vm.reset();
       this.syncVm();
+      // The opening mist is the first thing the player sees: it is drawn *before* the deal, so a
+      // piece landing on a fogged square is hidden from the very first frame (deal() hides fogged
+      // views as it spawns them), and `reconcile` after the deal applies the same hiding to the
+      // settled views — before the computer ever opens, so an AI move into the mist is never shown.
+      this.applyFog();
       await withTimeout(this.board.deal(this.jieqi.board), 3000);
       this.board.reconcile(this.jieqi.board);
-      // The opening mist is the first thing the player sees: it draws with the pieces.
-      this.applyFog();
     } finally {
       this.leave();
     }

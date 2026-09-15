@@ -1038,4 +1038,23 @@ JIEQI_VERSION_CODE=20 ./build-android-release.sh
 
 下一版 versionCode 从 **21** 起。
 
+### 14.4 签名 release 包（1.5.4）— 开局雾下棋子立刻隐藏 + 出雾渐显
+
+```
+JIEQI_VERSION_CODE=21 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.5.4-release.apk`，**17,879,063 B** |
+| badging | `com.jieqi.game`、versionName **1.5.4**、versionCode **21**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（同一把密钥） |
+| 改动 | ① **开局立刻隐藏**（用户报告「电脑第一步雾里可见」）：`startNewGame` 原顺序 reconcile→applyFog 导致开局 `fogVisible` 为空、雾下棋子视图从未隐藏、AI 先行时首步在雾里被看光——改为 `applyFog()` 在 `deal()` 之前，`BoardView.deal()` 对雾格上的新视图立即 `setVisible(false)`（发牌期间就不显示）。② **出雾渐显**（用户拍板）：`reconcile` 里 `emerging = fogVisible!==null && !fogged && !view.visible`（上一帧被雾隐藏、现在落在可见格）→ alpha 0 渐显到 1（380ms Quad.easeOut），不再瞬间弹出；终局揭示（fogVisible===null）除外。③ backdoor `version` 同步 1.5.4（此前漏改停在 1.5.1） |
+| 门禁 | typecheck 0 错；`pnpm test` **121/121**（纯渲染路径改动，规则未动） |
+| 浏览器实测 | headless：迷雾局开局（AI 红已先行 ply 1）截图确认雾区无棋子透出、仅规则可见格有子；玩家移炮后红方底线一枚棋子半透明渐显（中途截图命中渐显态）；CDP daemon 反复崩断，渐显完成态对比图未取到，由代码路径覆盖 |
+| 包内核对 | `assets/www/assets/index-*.js`：对方已落子×1、迷雾中×1、1.5.4×1 |
+| 坚果云 | 已上传 `揭棋_20260915_v7.apk`（17,879,063 B，**揭棋文件夹**，PROPFIND `getcontentlength` 与本地字节数一致） |
+
+下一版 versionCode 从 **22** 起。
+
 
