@@ -18,3 +18,6 @@ cordova/www/
 
 # logs / temp
 *.log
+
+# scratch repro tests (debug only, never committed)
+test/_scratch/
