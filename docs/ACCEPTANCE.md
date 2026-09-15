@@ -1057,4 +1057,23 @@ JIEQI_VERSION_CODE=21 ./build-android-release.sh
 
 下一版 versionCode 从 **22** 起。
 
+### 14.5 签名 release 包（1.5.5）— 出雾棋子改为移动中渐显
+
+```
+JIEQI_VERSION_CODE=22 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.5.5-release.apk`，**17,879,119 B** |
+| badging | `com.jieqi.game`、versionName **1.5.5**、versionCode **22**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（同一把密钥） |
+| 改动 | 出雾渐显从「落点原地弹出」改为「移动过程中浮现」（用户拍板）：`PieceView.glideTo(x, y, {fadeIn})` 从 alpha 0 出发、alpha 渐显 tween 与滑行同时长同缓动（Sine.easeInOut），落点已全显；`BoardView.playMove` 判定 `emerges = !mover.visible && fogVisible!==null && fogVisible.has(move.to)`（mover.visible 记录走子前雾判、fogVisible 是走子后视野——scene 在 playMove 前已 applyFog）。静止被揭示的棋子（视野扩展、棋未动）保留 reconcile 380ms 原地渐显，两套并存。1.5.4 的 reconcile 落点渐显对移动棋子自动不触发（glideTo 已把视图置可见） |
+| 门禁 | typecheck 0 错；`pnpm test` **121/121** |
+| 浏览器实测 | headless 自对弈：第 7 手电脑红車（暗車一平二 · 翻出馬）走进玩家视野，滑行中途截图命中——紅車半透明、一边移动一边浮现；此前 5 手电脑雾内着法（落点仍雾）全程无棋子透出；`errors()` 0。自对弈偶见「对手的着法被禁止循环追棋拦下（内部错误）」——backdoor 自动走子路径的既有现象（UI 真人对局走不到：玩家侧 UI 先拦截、AI 侧 runAi 先 isSelectable 过滤），非本次改动引入，不影响真机对局 |
+| 包内核对 | `assets/www/assets/index-*.js`：对方已落子×1、1.5.5×1 |
+| 坚果云 | 已上传 `揭棋_20260915_v8.apk`（17,879,119 B，揭棋文件夹，PROPFIND `getcontentlength` 与本地字节数一致） |
+
+下一版 versionCode 从 **23** 起。
+
 

@@ -202,8 +202,15 @@ export class PieceView extends Phaser.GameObjects.Container {
     this.setAlpha(REVEALED_ALPHA);
   }
 
-  /** Slides the piece to a square with a small arc and a shadow that follows underneath. */
-  glideTo(x: number, y: number): Promise<void> {
+  /**
+   * Slides the piece to a square with a small arc and a shadow that follows underneath.
+   *
+   * `fadeIn` is for a piece stepping out of the mist: it starts invisible and ramps to full opacity
+   * over the *journey* — so it emerges while travelling, not at the landing (user 1.5.4).
+   */
+  glideTo(x: number, y: number, options: { fadeIn?: boolean } = {}): Promise<void> {
+    const fadeIn = options.fadeIn ?? false;
+    if (fadeIn) this.setAlpha(0).setVisible(true);
     const distance = Phaser.Math.Distance.Between(this.x, this.y, x, y);
     const duration = Phaser.Math.Clamp(distance * 2.6, 190, 430);
     return new Promise((resolve) => {
@@ -219,6 +226,9 @@ export class PieceView extends Phaser.GameObjects.Container {
           resolve();
         },
       });
+      if (fadeIn) {
+        this.scene.tweens.add({ targets: this, alpha: 1, duration, ease: 'Sine.easeInOut' });
+      }
       // The arc and the shadow separation are what make the piece look picked up rather than slid.
       this.scene.tweens.add({
         targets: this.disc,

@@ -355,7 +355,13 @@ export class BoardView {
     const mover = this.viewOf(event.pieceId);
     const kind = event.revealedKind;
     if (mover) {
-      const glide = mover.glideTo(target.x, target.y);
+      // 迷雾: a piece leaving the mist becomes visible *while it travels*, not suddenly at the
+      // landing (user 1.5.4). `mover.visible` records the pre-move fog verdict — hidden means it
+      // stood in fog; the destination's visibility is the post-move mist, which the scene already
+      // set before calling playMove. It fades in over the glide (glideTo's fadeIn).
+      const emerges =
+        !mover.visible && this.fogVisible !== null && this.fogVisible.has(event.move.to);
+      const glide = mover.glideTo(target.x, target.y, { fadeIn: emerges });
       // Turn the piece over just before it lands: early enough to be part of the move, late enough
       // that the eye has already followed it across the board.
       const flip =
