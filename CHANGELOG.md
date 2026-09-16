@@ -3,21 +3,16 @@
 本项目所有版本均出自同一份签名密钥（证书 SHA-256 `b0ec2bcd…89c9`）。
 详细验收读数见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
 
-## [1.7.0] — 2026-09-16
+## [1.7.0] — 2026-09-16（撤回后重打）
 
-- **迷雾：己方不在敌方视野里的棋子半透明**（用户拍板）——迷雾下，己方棋子凡站在敌方（AI）真实视野
-  之外的，画成 `STEALTH_ALPHA = 0.5` 半透明；在敌方视野内的己方棋子与敌方棋子保持不透明。玩家一眼
-  能看出哪些子藏得严实、哪些在敌人眼皮底下。实现：`GameScene.applyFog` 每步用 `visibleSquares(board, ai)`
-  算敌方视野 → `board.setStealth`（新增）；`BoardView.reconcile` 按格位定 alpha（进出敌方视野 260ms
-  渐隐渐显，与出雾渐显同套过渡）；`PieceView.dropIn` 新增 `targetAlpha`，发牌时落进暗处的新子直接以
-  0.5 落下。
-- **胜负结算时该效果取消**：`BoardView.revealHidden` 先清 stealth 并把所有面朝上的视图恢复 alpha 1 ——
-  终局揭示自带的压暗（暗子翻开 → REVEALED_ALPHA 0.6）是结算后唯一的半透明，两个效果不叠加。
-- 浏览器实测（Playwright headless + `setPosition` 确定性摆局）：像素级比对——敌方可见的红車 disc_lum
-  **175.6**（不透明），远离敌方的红車/红帥 **131 / 130**（半透明，暗约 44 亮度）；红車吃黑將终局后雾全消、
-  全部棋子恢复不透明（原半透明的回到 174-175），`errors()` 0。
+- **迷雾「己方不在敌方视野的棋子半透明」已撤回**（用户拍板：该效果会把敌方视野本身暴露给玩家，
+  泄露额外信息）。1.7.0 曾短暂包含此功能（`STEALTH_ALPHA`/`setStealth`/`dropIn targetAlpha`），
+  现已整体移除，代码恢复 1.6.1 的行为（仅保留版本号 1.7.0 / versionCode 26，避免 Android
+  版本回退装不上）。对应的 DESIGN.md 迷雾小节也已删除该条规则。
+- 包体内容与 1.6.1 等价（无 stealth 代码），`errors()` 0。
 - 门禁：typecheck 0 错；`pnpm test` **134/134**。
 - 签名 release 包：`jieqi-1.7.0-release.apk`（versionCode **26**，V2 签名同密钥 `b0ec2bcd…89c9`）。
+- 坚果云：`揭棋_20260916_v3.apk`（17,881,591 B）——**v2（含半透明效果的 1.7.0）已从该文件夹撤下**。
 
 ## [1.6.1] — 2026-09-16
 

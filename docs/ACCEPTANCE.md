@@ -1133,7 +1133,7 @@ JIEQI_VERSION_CODE=25 ./build-android-release.sh
 
 下一版 versionCode 从 **26** 起。
 
-### 14.9 签名 release 包（1.7.0）— 迷雾己方不在敌方视野的棋子半透明
+### 14.9 签名 release 包（1.7.0 重打）— 撤回迷雾半透明效果
 
 ```
 JIEQI_VERSION_CODE=26 ./build-android-release.sh
@@ -1141,14 +1141,13 @@ JIEQI_VERSION_CODE=26 ./build-android-release.sh
 
 | 读数 | 值 |
 | ---- | -- |
-| 产物 | `release/jieqi-1.7.0-release.apk`，**17,881,707 B** |
+| 产物 | `release/jieqi-1.7.0-release.apk`，**17,881,591 B**（与 1.6.1 同字节数：代码等价，仅版本名 1.6.1→1.7.0 同长替换） |
 | badging | `com.jieqi.game`、versionName **1.7.0**、versionCode **26**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
 | 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（同一把密钥） |
-| 改动 | **迷雾：己方不在敌方视野里的棋子半透明**（用户 2026-09-16 拍板）——`GameScene.applyFog` 每步用 `visibleSquares(board, ai)` 算敌方真实视野，收集「己方棋子所在格 ∉ 敌方视野」→ `board.setStealth`；`BoardView.reconcile` 对这类子画 `STEALTH_ALPHA=0.5`（进出敌方视野 260ms 渐隐渐显），`deal()` 让落进暗处的新子直接以 0.5 落下（`PieceView.dropIn` 新增 `targetAlpha` 参数）。**胜负结算时取消**：`revealHidden` 先清 stealth 并把所有面朝上的视图恢复 alpha 1，终局揭示自带的压暗（暗子→REVEALED_ALPHA 0.6）是结算后唯一的半透明，两效果不叠加 |
+| 改动 | **撤回 1.7.0 的迷雾半透明效果**（用户 2026-09-16 拍板：该效果把敌方视野本身暴露给玩家，泄露额外信息）。`git revert` 移除 `STEALTH_ALPHA`/`setStealth`/`dropIn targetAlpha` 与 DESIGN.md 该条规则，代码行为恢复 1.6.1；**版本号保留 1.7.0 / versionCode 26 不回退**（Android 拒绝装更低 code，若已装过含效果的 v2 仍可覆盖安装）。v2（含效果，17,881,707 B）已从坚果云撤下 |
 | 门禁 | typecheck 0 错；`pnpm test` **134/134** |
-| 浏览器实测 | Playwright headless + `setPosition` 确定性摆局（红=玩家）：① 红車(0,8) 在黑車同列 → 敌方可见 → 截图像素 **disc_lum 175.6（不透明）**；红車(8,8) 与红帥(4,9) 远离黑子 → **disc_lum 131.2 / 130.6（半透明，比不透明暗 ~44 亮度）**；黑車/黑將恒 156-168（不透明）。② 红車(4,8) 吃黑將终局：结算横幅「黑方将帅被吃，红方胜 · 所有暗子已翻开」，雾全消、所有子恢复不透明（原半透明的 (8,8)/帥 回到 174-175），`errors()` 0 |
-| 包内核对 | `assets/www/assets/index-*.js`：`stealth`×7、1.7.0×1 |
-| 坚果云 | 已上传 `揭棋_20260916_v2.apk`（17,881,707 B，揭棋文件夹，PROPFIND `getcontentlength` 与本地字节数一致） |
+| 包内核对 | `assets/www/assets/index-*.js`：**`stealth` 相关引用 0**（效果彻底出包）、circleSkin×3（1.6.1 圆形？按钮保留）、1.7.0×1 |
+| 坚果云 | 已上传 `揭棋_20260916_v3.apk`（17,881,591 B，揭棋文件夹，PROPFIND `getcontentlength` 与本地字节数一致）；**`揭棋_20260916_v2.apk` 已删除** |
 
 下一版 versionCode 从 **27** 起。
 

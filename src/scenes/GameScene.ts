@@ -39,7 +39,6 @@ import { randomSeed } from '../core/rng';
 import {
   COLOR_NAME,
   FIRST_MOVER,
-  SQUARES,
   type Color,
   type GameMode,
   type Move,
@@ -492,20 +491,10 @@ export class GameScene extends Phaser.Scene {
   private applyFog(): void {
     if (!this.fogMode) {
       this.board.setFog(null);
-      this.board.setStealth(null);
       return;
     }
     this.fogVisible = visibleSquares(this.jieqi.board, this.player);
     this.board.setFog(this.fogVisible);
-    // 迷雾 (user 2026-09-16): 己方不在敌方视野里的棋子半透明——按敌方（AI）的真实视野算，玩家一眼
-    // 看出哪些子藏得严实、哪些在敌人眼皮底下。胜负结算时该效果取消（revealHidden 清掉，终局揭示
-    // 自带的压暗是唯一的半透明）。
-    const enemySees = visibleSquares(this.jieqi.board, this.ai);
-    const stealth = new Set<number>();
-    for (let sq = 0; sq < SQUARES; sq++) {
-      if (this.jieqi.board.ownerAt(sq) === this.player && !enemySees.has(sq)) stealth.add(sq);
-    }
-    this.board.setStealth(stealth);
   }
 
   /**

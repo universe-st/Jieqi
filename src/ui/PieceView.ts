@@ -27,13 +27,6 @@ const FLIP_HALF_MS = 105;
  */
 export const REVEALED_ALPHA = 0.6;
 
-/**
- * 迷雾: a piece of the player's that the enemy cannot see is drawn at this alpha — 半透明, so the
- * player can tell at a glance which of their pieces are hidden in the mist and which the enemy is
- * looking at. Distinct from {@link REVEALED_ALPHA} (the end-of-match dim of turned-up 暗子).
- */
-export const STEALTH_ALPHA = 0.5;
-
 export class PieceView extends Phaser.GameObjects.Container {
   readonly pieceId: number;
   readonly color: Color;
@@ -320,9 +313,8 @@ export class PieceView extends Phaser.GameObjects.Container {
     });
   }
 
-  /** Flies in from off-board during the deal. `targetAlpha` is where it settles — 1 normally, or
-   * {@link STEALTH_ALPHA} for a player piece the enemy cannot see (迷雾). */
-  dropIn(x: number, y: number, delay: number, fromY: number, targetAlpha = 1): Promise<void> {
+  /** Flies in from off-board during the deal. */
+  dropIn(x: number, y: number, delay: number, fromY: number): Promise<void> {
     this.setPosition(x, fromY);
     this.setScale(0.72);
     this.setAlpha(0);
@@ -330,7 +322,7 @@ export class PieceView extends Phaser.GameObjects.Container {
       this.scene.tweens.add({
         targets: this,
         y,
-        alpha: targetAlpha,
+        alpha: 1,
         scale: 1,
         duration: 420,
         delay,

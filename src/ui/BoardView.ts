@@ -23,7 +23,7 @@ import {
   localToSquare,
   squareToLocal,
 } from './palette';
-import { PieceView, REVEALED_ALPHA, STEALTH_ALPHA } from './PieceView';
+import { PieceView, REVEALED_ALPHA } from './PieceView';
 import { BAKE_SCALE } from './render-scale';
 import { TEX } from './textures';
 
@@ -98,14 +98,6 @@ export class BoardView {
    * mist. `null` (标准/混斗, and the end-of-match reveal) shows everything.
    */
   private fogVisible: ReadonlySet<number> | null = null;
-
-  /**
-   * Squares holding the player's own pieces that the enemy cannot see — drawn 半透明 so the player
-   * can tell which of their pieces are hidden in the mist. `null` while off (标准/混斗, and the
-   * end-of-match reveal, which has its own dimming). Set by the scene on every position change in
-   * fog mode only; cleared by {@link setStealth} and by {@link revealHidden}.
-   */
-  private stealth: ReadonlySet<number> | null = null;
 
   /**
    * Whether the board is drawn from black's side.
@@ -291,11 +283,9 @@ export class BoardView {
       // it drops in. The fog must own that square from the first frame, or the opening deal and the
       // computer's first move would leak what the mist is supposed to keep.
       if (this.fogVisible !== null && !this.fogVisible.has(sq)) view.setVisible(false);
-      // 迷雾: a player piece the enemy cannot see settles 半透明 as it lands (not opaque-then-fade).
-      const stealthy = this.stealth !== null && this.stealth.has(sq);
       const local = this.local(sq);
       const fromY = local.y > BOARD_HEIGHT / 2 ? BOARD_HEIGHT + 90 : -90;
-      jobs.push(view.dropIn(local.x, local.y, index * 26, fromY, stealthy ? STEALTH_ALPHA : 1));
+      jobs.push(view.dropIn(local.x, local.y, index * 26, fromY));
       index += 1;
     }
     await this.track(Promise.all(jobs));
@@ -315,10 +305,6 @@ export class BoardView {
    */
   revealHidden(board: Board): void {
     this.over = true;
-    // 胜负结算：取消「己方不在敌方视野」的半透明——终局揭示自带语义（暗子翻开压到
-    // REVEALED_ALPHA），已经面朝上的子全部回到不透明，游戏的临时效果不带进终局。
-    this.stealth = null;
-    for (const view of this.pieces.values()) view.setAlpha(1);
     let index = 0;
     for (let sq = 0; sq < SQUARES; sq++) {
       const piece = board.at(sq);
@@ -560,10 +546,6 @@ export class BoardView {
       // not enough, the view itself must not draw it (the mist tiles are translucent; the hiding is
       // what actually keeps the secret).
       const fogged = this.fogVisible !== null && !this.fogVisible.has(sq);
-      // 迷雾 (user 2026-09-16): a player piece the enemy cannot see is drawn 半透明. Ends with the
-      // match — `over` turns the effect off so the endgame reveal's own dimming is the only one.
-      const stealthed = this.stealth !== null && !this.over && this.stealth.has(sq);
-      const targetAlpha = dimmed ? REVEALED_ALPHA : stealthed ? STEALTH_ALPHA : 1;
       // A piece stepping out of the mist fades in instead of popping into existence (user 1.5.4).
       // `view.visible` reflects the previous reconcile's fog verdict, so a hidden view that now stands
       // on a visible square is exactly "came out of the fog". The endgame reveal (fogVisible === null)
@@ -574,23 +556,12 @@ export class BoardView {
         view.setVisible(true).setAlpha(0);
         this.scene.tweens.add({
           targets: view,
-          alpha: targetAlpha,
+          alpha: dimmed ? REVEALED_ALPHA : 1,
           duration: 380,
           ease: 'Quad.easeOut',
         });
       } else {
-        view.setVisible(!fogged);
-        // A piece slipping into or out of the enemy's sight fades rather than pops — the same
-        // courtesy the fog's own reveal gets.
-        if (view.alpha !== targetAlpha) {
-          this.scene.tweens.killTweensOf(view);
-          this.scene.tweens.add({
-            targets: view,
-            alpha: targetAlpha,
-            duration: 260,
-            ease: 'Quad.easeOut',
-          });
-        }
+        view.setAlpha(dimmed ? REVEALED_ALPHA : 1).setVisible(!fogged);
       }
       if (piece.hidden) {
         if (dimmed) view.showRevealed(piece.kind);
@@ -770,16 +741,6 @@ export class BoardView {
       this.setFogTile(sq, !visible.has(sq));
     }
     this.sweepFogParticles(visible);
-  }
-
-  /**
-   * 迷雾: marks the player's own pieces the enemy cannot see, so {@link reconcile} draws them
-   * 半透明. `null` switches the effect off. The scene sets it on every position change in fog mode;
-   * the end-of-match reveal clears it too ({@link revealHidden}), because the reveal has its own
-   * dimming and the two must not stack.
-   */
-  setStealth(squares: ReadonlySet<number> | null): void {
-    this.stealth = squares;
   }
 
   /** How many squares are fogged right now — the acceptance run's reading of the picture. */
