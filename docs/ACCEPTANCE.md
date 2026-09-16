@@ -1114,4 +1114,23 @@ JIEQI_VERSION_CODE=24 ./build-android-release.sh
 
 下一版 versionCode 从 **25** 起。
 
+### 14.8 签名 release 包（1.6.1）— 「？」按钮圆形底
+
+```
+JIEQI_VERSION_CODE=25 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.6.1-release.apk`，**17,881,591 B** |
+| badging | `com.jieqi.game`、versionName **1.6.1**、versionCode **25**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（同一把密钥） |
+| 改动 | **「？」按钮加圆形底**（用户反馈：ghost 幽灵字形不像按钮，看不出是四个操作按钮之一）：新增 `src/ui/CircleButton.ts`——继承库 `Button`，`refreshAppearance` 改画 `buttonSkinStyles(theme,'secondary',theme.radius.pill)` 皮肤（ProceduralSkin 把半径钳到半边长 → 32×32 方形盒即正圆），`secondary` 色板（surface 填充 + border 描边）与悔棋/提示/认输同族，焦点环随圆；GameScene 的「？」按钮从 ghost 变体换成 `CircleButton`（size sm、32×32），菜单/新局等其余按钮不变 |
+| 门禁 | typecheck 0 错；`pnpm test` **134/134** |
+| 浏览器实测 | Playwright headless：`startGame()` 进棋盘后取 helpButton widget 矩形 = **25.6×25.6（正方形，32 设计px×0.8 缩放）**，底行按钮区截图——「？」为**深色圆盘 + 金棕描边 + 白色问号居中**（圆形底实锤），旁边 菜单 仍是纯文字、认输（红）新局（绿）仍是圆角矩形，形状不受影响；`errors()` 0 |
+| 包内核对 | `assets/www/assets/index-*.js`：`circleSkin`×3（CircleButton 代码已进包）、1.6.1×1、玩法介绍×2 |
+| 坚果云 | 已上传 `揭棋_20260916_v1.apk`（17,881,591 B，揭棋文件夹，PROPFIND `getcontentlength` 与本地字节数一致） |
+
+下一版 versionCode 从 **26** 起。
+
 

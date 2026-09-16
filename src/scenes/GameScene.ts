@@ -46,6 +46,7 @@ import {
 } from '../core/types';
 import { foggedBoardFor, visibleSquares } from '../core/vision';
 import { BoardView, type BoardCue, type DangerMark } from '../ui/BoardView';
+import { CircleButton } from '../ui/CircleButton';
 import { openDifficultyDialog, openModeHelpDialog, openVolumeDialog } from '../ui/dialogs';
 import { banner, petalFall, screenWash, withTimeout } from '../ui/fx';
 import { BOARD_HEIGHT, BOARD_WIDTH, C, DESIGN_WIDTH, HUD_TOP_HEIGHT } from '../ui/palette';
@@ -359,10 +360,11 @@ export class GameScene extends Phaser.Scene {
           });
           Spacer({ flex: true });
           // 玩法介绍 — one tap from the board in every mode: the ？ explains the current mode's rules.
-          Button('？', {
-            variant: 'ghost',
+          // A circle base (not a ghost glyph) so it reads as one of the action buttons in this row.
+          CircleButton('？', {
             size: 'sm',
-            width: 44,
+            width: 32,
+            height: 32,
             name: 'helpButton',
             label: '玩法介绍',
             onClick: this.tap(() => this.openModeHelp()),
