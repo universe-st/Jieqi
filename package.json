@@ -1,6 +1,6 @@
 {
   "name": "jieqi",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": true,
   "type": "module",
   "description": "揭棋 (Jieqi) — a Chinese-chess variant with hidden pieces, played against an AI. Phaser 4 + phaser-mvvm, shipped to Android through Cordova.",

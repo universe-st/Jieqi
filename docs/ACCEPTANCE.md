@@ -1151,4 +1151,22 @@ JIEQI_VERSION_CODE=26 ./build-android-release.sh
 
 下一版 versionCode 从 **27** 起。
 
+### 14.10 签名 release 包（1.7.1）— 修复 AI「送车吃暗子」评分虚高
+
+```
+JIEQI_VERSION_CODE=27 ./build-android-release.sh
+```
+
+| 读数 | 值 |
+| ---- | -- |
+| 产物 | `release/jieqi-1.7.1-release.apk`，**17,881,655 B** |
+| badging | `com.jieqi.game`、versionName **1.7.1**、versionCode **27**、minSdk 24 / target 35 / compile 35、应用名 揭棋 |
+| 签名 | V2 通过，证书 SHA-256 `b0ec2bcd…89c9`（同一把密钥） |
+| 改动 | **修复 AI 把「送车吃暗子」当赚着**（用户 2026-09-16 报告：硬 AI 车吃暗马、落点贴脸暗车位，被暗车反吃）。根因不是搜索看不见反吃（R4 暗子按格位走，每个采样世界都生成且正确计价），而是**根节点 alpha-beta 上界混入 PIMC 平均**：`searchRoot` 对被截断的着法只返回上界（best−ROOT_SLACK），引擎当精确值平均，真值约 −700 的着法被虚报成 +54~+205，预算紧张时可能被选中。修复：`searchRoot` 返回 `{scores, bounds}`（`value <= alphaBefore - ROOT_SLACK` 判截断），引擎只累加非 bound 分；任何世界都无精确分的着法 = 每世界都比最优差 ≥120，垫底（−1,000,000），噪声/epsilon 只能在精确分着法里挑。commit `af15783` |
+| 门禁 | typecheck 0 错；`pnpm test` **136/136**（新增 `test/dark-recapture.test.ts` 2 例：6 种子断言送车评分 <50 且永不被选） |
+| 包内核对 | `assets/www/assets/index-*.js`：1.7.1×1，旧串 1.7.0 残留 **0** |
+| 坚果云 | 已上传 `揭棋_20260916_v4.apk`（17,881,655 B，揭棋文件夹，PROPFIND `getcontentlength` == 本地字节数，HTTP 201） |
+
+下一版 versionCode 从 **28** 起。
+
 
