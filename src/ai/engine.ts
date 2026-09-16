@@ -268,13 +268,20 @@ function* searchWorlds(plan: SearchPlan): Generator<number, AiDecision, void> {
     }
 
     searcher.beginWorld();
-    const scores = searcher.scoreWorld(world, color, moves, order, settings.depth);
+    const { scores, bounds } = searcher.scoreWorld(world, color, moves, order, settings.depth);
 
     // A world cut short by the budget reports placeholder scores for its unsearched moves; folding
     // those into the average would drag good moves down. Keep a partial first world, drop later ones.
     const usable = !searcher.aborted || worlds === 0;
     if (usable) {
       for (let i = 0; i < moves.length; i++) {
+        // `bounds[i]` marks an alpha-beta upper bound, not an exact value: the move proved to be at
+        // least ROOT_SLACK worse than the best found in this world, and the search stopped at the
+        // cutoff. Averaging it like a real score would let a move that is worth roughly −700 (e.g. a
+        // rook taking a dark piece and landing on a dark piece's line) report a plausible +200 — and
+        // under time pressure it could even be chosen. Count exact scores only; a move never searched
+        // exactly in any world is provably worse than the best in every world, so it ranks last.
+        if (bounds[i]) continue;
         totals[i] = (totals[i] as number) + (scores[i] as number);
         counts[i] = (counts[i] as number) + 1;
       }

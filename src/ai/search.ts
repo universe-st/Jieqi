@@ -179,9 +179,22 @@ export class Searcher {
    * The order comes from the running average of previous worlds, so the most promising move is
    * searched first and prunes the rest — while {@link ROOT_SLACK} keeps the near-misses accurately
    * scored, which is what the sampling average actually needs.
+   *
+   * `bounds[i]` is `true` when `scores[i]` is an **upper bound** rather than the move's exact value:
+   * the move proved to be at least {@link ROOT_SLACK} worse than the best move found so far in this
+   * world, so the search stopped at the cutoff instead of establishing how bad it really is. Callers
+   * that average scores across worlds must not treat a bound as an exact value — the whole point of
+   * the flag is that a move like "rook takes a dark piece, landing on a dark piece's line" is worth
+   * roughly `−700`, yet reports a plausible-looking `+200` because it was cut against a better move.
    */
-  searchRoot(board: Board, color: Color, moves: readonly Move[], order: readonly number[]): number[] {
+  searchRoot(
+    board: Board,
+    color: Color,
+    moves: readonly Move[],
+    order: readonly number[],
+  ): { scores: number[]; bounds: boolean[] } {
     const scores = new Array<number>(moves.length).fill(-INF);
+    const bounds = new Array<boolean>(moves.length).fill(false);
     const opponent = other(color);
     this.path.length = 0;
     this.path.push(board.key);
@@ -189,6 +202,7 @@ export class Searcher {
     let alpha = -INF;
     for (const index of order) {
       if (this.aborted) break;
+      const alphaBefore = alpha;
       const move = moves[index] as Move;
       const undo = board.makeMove(move.from, move.to);
       // 迷雾 吃王棋: a move that takes the general wins on the spot — the game ends at the first
@@ -206,21 +220,29 @@ export class Searcher {
         if (MATE > alpha) alpha = MATE;
         continue;
       }
-      const value = -this.negamax(board, opponent, this.depth - 1, -INF, -alpha + ROOT_SLACK, 1);
+      const value = -this.negamax(board, opponent, this.depth - 1, -INF, -alphaBefore + ROOT_SLACK, 1);
       board.unmakeMove(undo);
       if (this.aborted) break;
       scores[index] = value;
+      // The child searched with beta = −alphaBefore + ROOT_SLACK; a result that reached that beta is
+      // a beta-cutoff — a lower bound on the child, hence an upper bound on this root move. Exactly
+      // the moves the "small randomness" may pick from are the ones that stay within slack of the
+      // best, and those are exactly the ones that come back exact.
+      bounds[index] = value <= alphaBefore - ROOT_SLACK;
       if (value > alpha) alpha = value;
     }
 
     // Moves the budget never reached are ranked just behind everything that was searched, so an early
-    // abort degrades the answer instead of producing garbage.
+    // abort degrades the answer instead of producing garbage. They carry no exact value either.
     const fallback = alpha === -INF ? 0 : alpha - 400;
     for (let i = 0; i < scores.length; i++) {
-      if (scores[i] === -INF) scores[i] = fallback;
+      if (scores[i] === -INF) {
+        scores[i] = fallback;
+        bounds[i] = true;
+      }
     }
     this.path.length = 0;
-    return scores;
+    return { scores, bounds };
   }
 
   /** Searches one world at the given depth and returns the per-move scores. */
@@ -230,7 +252,7 @@ export class Searcher {
     moves: readonly Move[],
     order: readonly number[],
     depth: number,
-  ): number[] {
+  ): { scores: number[]; bounds: boolean[] } {
     this.depth = Math.max(1, Math.min(MAX_PLY - 2, depth));
     this.depthReached = Math.max(this.depthReached, this.depth);
     return this.searchRoot(board, color, moves, order);
